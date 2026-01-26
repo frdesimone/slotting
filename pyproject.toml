@@ -1,0 +1,14 @@
+﻿[project]
+name = "slotting"
+version = "0.1.0"
+description = "Algoritmo de slotting"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

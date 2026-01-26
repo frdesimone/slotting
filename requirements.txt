@@ -1,0 +1,2 @@
+﻿# Dependencias runtime
+# requests>=2.31

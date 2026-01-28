@@ -34,6 +34,7 @@ groups = build_groups(skus=skus, orders=orders, config=config)
 Notas:
 - `rot` es por lineas (conteo de filas) y `cycle_units` se calcula como `sum(unidades) * (cycle_days / period_days)`.
 - SKUs sin datos completos en el master se excluyen.
+- `Cantidad unidades` se usa tal cual; no hay conversion por inner/master.
 
 ### Flujo de prep (resumen)
 

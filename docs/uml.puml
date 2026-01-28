@@ -1,0 +1,62 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+class SKU {
+  +sku_id: str
+  +rot: float
+  +height: float
+  +volume: float
+  +weight: float
+  +cycle_units: float
+  +avg_units_per_line: float
+}
+
+class Order {
+  +order_id: str
+  +sku_ids: list[str]
+}
+
+class Tray {
+  +tray_id: str
+  +height: float
+  +max_volume: float
+  +max_weight: float
+}
+
+class MicroSlottingConfig {
+  +cycle_days: float
+  +top_k_neighbors: int
+  +aff_min: float
+  +affinity_metric: AffinityMetric
+  +affinity_scorer: AffinityScorer
+  +candidate_selector: CandidateSelector
+  +seed_count: int
+  +min_delta: float
+  +max_group_size: int
+  +wa: float
+  +wr: float
+  +wh: float
+  +height_ref: float
+  +p_height: float
+}
+
+class AffinityMetric
+class AffinityScorer
+class CandidateSelector
+
+class AffinityNeighbor {
+  +sku_id: str
+  +affinity: float
+}
+
+class AffinityGroup {
+  +seed_sku_id: str
+  +sku_ids: list[str]
+  +score: float
+}
+
+Order "*" -- "*" SKU : contains
+AffinityGroup "*" -- "*" SKU : groups
+AffinityNeighbor "*" -- "1" SKU : neighbor
+
+@enduml

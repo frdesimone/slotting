@@ -3,11 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from slotting.algorithms.micro import (
-    MicroSlottingConfig,
-    build_groups,
-    load_micro_slotting_inputs_with_stats,
-)
+from slotting.algorithms.micro import MicroSlottingConfig, build_groups
+from slotting.algorithms.common.prep.loader import load_slotting_inputs
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,7 +50,7 @@ def main() -> int:
     codes_csv = Path(args.codes_csv)
     orders_csv = Path(args.orders_csv)
 
-    skus, orders, stats = load_micro_slotting_inputs_with_stats(
+    skus, orders, stats = load_slotting_inputs(  
         codes_csv_path=codes_csv,
         orders_csv_path=orders_csv,
         cycle_days=args.cycle_days,

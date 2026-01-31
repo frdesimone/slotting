@@ -16,13 +16,13 @@ from slotting.algorithms.micro.strategies import (
 class MicroSlottingConfig:
     cycle_days: float = 7.0
     top_k_neighbors: int = 30
-    aff_min: float = 0.01
+    aff_min: float = 0.1
     affinity_metric: AffinityMetric = field(default_factory=JaccardMetric)
     affinity_scorer: AffinityScorer = field(default_factory=StarAffinityScorer)
     candidate_selector: CandidateSelector = field(
         default_factory=OneHopCandidateSelector
     )
-    seed_count: int = 200
+    seed_count: int = 300
     min_delta: float = 0.0
     max_group_size: int = 12
     wa: float = 0.75

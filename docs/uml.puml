@@ -18,9 +18,37 @@ class Order {
 
 class Tray {
   +tray_id: str
+  +group_id: str
   +height: float
   +max_volume: float
   +max_weight: float
+}
+
+class TrayItem {
+  +sku_id: str
+  +units: float
+  +unit_volume: float
+  +unit_weight: float
+  +total_volume: float
+  +total_weight: float
+}
+
+class VLM {
+  +vlm_id: str
+  +capacity: float
+  +load: float
+}
+
+class GroupAllocation {
+  +group_id: str
+  +vlm_ids: list[str]
+  +replication_split: list[float]
+}
+
+class TrayAssignment {
+  +tray_id: str
+  +vlm_id: str
+  +group_id: str
 }
 
 class MicroSlottingConfig {
@@ -58,5 +86,6 @@ class AffinityGroup {
 Order "*" -- "*" SKU : contains
 AffinityGroup "*" -- "*" SKU : groups
 AffinityNeighbor "*" -- "1" SKU : neighbor
+Tray "1" -- "*" TrayItem : contains
 
 @enduml

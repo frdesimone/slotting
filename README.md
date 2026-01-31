@@ -19,7 +19,12 @@ Entrada esperada (ya procesada, sin leer CSVs en esta etapa):
 Ejemplo de uso:
 
 ```python
-from slotting.algorithms.micro import MicroSlottingConfig, build_groups, load_micro_slotting_inputs
+from slotting.algorithms.micro import (
+    MicroSlottingConfig,
+    build_groups,
+    load_micro_slotting_inputs,
+    select_groups,
+)
 
 config = MicroSlottingConfig()
 skus, orders = load_micro_slotting_inputs(
@@ -29,6 +34,7 @@ skus, orders = load_micro_slotting_inputs(
     period_days=180.0,
 )
 groups = build_groups(skus=skus, orders=orders, config=config)
+selected_groups = select_groups(groups=groups, skus=skus)
 ```
 
 Notas:
@@ -43,10 +49,19 @@ Notas:
 3) Calcular `cycle_units` y filtrar SKUs incompletos.
 4) Filtrar pedidos vacíos tras el cruce con SKUs válidos.
 
+### Flujo de micro-slotting (resumen)
+
+1) Construir el grafo de afinidades (Jaccard + top-K + aff_min).
+2) Elegir seeds (top rotación) y generar grupos con greedy.
+3) Scoring de grupo (afinidad + rotación - penalización de altura).
+4) Deduplicación y selección sin solapamientos (Paso 6).
+
+Detalles completos: `docs/micro_slotting_v1.md`.
+
 ### Limitaciones actuales
 
 - Afinidades `O(n^2)` por pedido: órdenes muy grandes pueden tardar mucho.
-- No hay salida física a bandejas; solo se generan grupos lógicos.
+- No hay salida física a bandejas; se generan grupos lógicos y selección Paso 6.
 - SKUs sin altura/volumen/peso se excluyen del proceso.
 
 ### Ejecucion rapida con CSVs locales

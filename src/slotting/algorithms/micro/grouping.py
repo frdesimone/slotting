@@ -69,7 +69,62 @@ def _build_affinity_graph(
 
 
 def _select_seeds(sku_list: list[SKU], config: MicroSlottingConfig) -> list[SKU]:
-    return sorted(sku_list, key=lambda s: s.rot, reverse=True)[: config.seed_count]
+    sorted_skus = sorted(sku_list, key=lambda s: s.rot, reverse=True)
+    seed_count = min(config.seed_count, len(sorted_skus))
+    if seed_count <= 0:
+        return []
+
+    def take_evenly(items: list[SKU], count: int) -> list[SKU]:
+        if count <= 0 or not items:
+            return []
+        if count >= len(items):
+            return list(items)
+        chosen: list[SKU] = []
+        used_idx: set[int] = set()
+        for i in range(count):
+            idx = int((i + 0.5) * len(items) / count)
+            if idx >= len(items):
+                idx = len(items) - 1
+            j = idx
+            while j < len(items) and j in used_idx:
+                j += 1
+            if j >= len(items):
+                j = idx
+                while j >= 0 and j in used_idx:
+                    j -= 1
+            if j < 0:
+                break
+            used_idx.add(j)
+            chosen.append(items[j])
+        return chosen
+
+    n = len(sorted_skus)
+    p40 = int(n * 0.40)
+    p80 = int(n * 0.80)
+
+    top = sorted_skus[:p40] if p40 > 0 else []
+    mid = sorted_skus[p40:p80] if p80 > p40 else []
+    tail = sorted_skus[p80:] if p80 < n else []
+
+    top_count = int(round(seed_count * 0.4))
+    mid_count = int(round(seed_count * 0.4))
+    tail_count = seed_count - top_count - mid_count
+
+    selected: list[SKU] = []
+    selected.extend(take_evenly(top, top_count))
+    selected.extend(take_evenly(mid, mid_count))
+    selected.extend(take_evenly(tail, tail_count))
+
+    if len(selected) < seed_count:
+        selected_ids = {sku.sku_id for sku in selected}
+        for sku in sorted_skus:
+            if sku.sku_id in selected_ids:
+                continue
+            selected.append(sku)
+            if len(selected) >= seed_count:
+                break
+
+    return selected
 
 
 def _build_group_for_seed(

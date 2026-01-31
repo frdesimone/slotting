@@ -14,6 +14,7 @@ from .strategies import (
     TwoHopCandidateSelector,
 )
 from .group_score import group_score
+from .selection import select_groups
 
 __all__ = [
     "AffinityMetric",
@@ -28,6 +29,7 @@ __all__ = [
     "build_affinity_graph",
     "build_groups",
     "group_score",
+    "select_groups",
     "load_micro_slotting_inputs",
     "load_micro_slotting_inputs_with_stats",
     "MicroSlottingConfig",

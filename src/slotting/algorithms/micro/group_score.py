@@ -26,6 +26,21 @@ def group_score(
     )
 
 
+def estimate_cycle_units(sku: SKU) -> float:
+    if sku.cycle_units is not None:
+        return sku.cycle_units
+    if sku.avg_units_per_line is not None:
+        return sku.rot * sku.avg_units_per_line
+    return sku.rot
+
+
+def group_cost_cycle_volume(group_ids: list[str], sku_by_id: dict[str, SKU]) -> float:
+    return sum(
+        estimate_cycle_units(sku_by_id[sku_id]) * sku_by_id[sku_id].volume
+        for sku_id in group_ids
+    )
+
+
 def _rotation_benefit(group_ids: list[str], sku_by_id: dict[str, SKU]) -> float:
     return sum(sku_by_id[sku_id].rot for sku_id in group_ids)
 

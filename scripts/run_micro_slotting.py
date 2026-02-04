@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 from slotting.algorithms.micro import (
@@ -9,10 +10,20 @@ from slotting.algorithms.micro import (
     build_groups,
     load_micro_slotting_inputs_with_stats,
     select_groups,
+    build_tray_plans,
+    trays_to_csv_rows,
 )
-from slotting.algorithms.micro.group_score import group_cost_cycle_volume
+from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state, dump_affinity_graph_json
+from slotting.algorithms.micro.optimization import LocalSearchConfig, OptimizationResult, optimize
+from slotting.algorithms.micro.reporting import build_run_report
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TRAYS_CSV = REPO_ROOT / "outputs" / "trays.csv"
+DEFAULT_OPT_TRAYS_CSV = REPO_ROOT / "outputs" / "trays_optimized.csv"
+DEFAULT_OPT_LOG = REPO_ROOT / "outputs" / "optimizer.log"
+DEFAULT_OPT_TRACE = REPO_ROOT / "outputs" / "optimizer_trace.csv"
+DEFAULT_OPT_REPORT = REPO_ROOT / "outputs" / "optimizer_report.txt"
+DEFAULT_AFFINITY_JSON = REPO_ROOT / "outputs" / "affinity_graph.json"
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -37,17 +48,45 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cycle-days", type=float, default=None)
     parser.add_argument("--period-days", type=float, default=None)
-    parser.add_argument("--seed-count", type=int, default=None)
-    parser.add_argument("--top-k-neighbors", type=int, default=None)
-    parser.add_argument("--aff-min", type=float, default=None)
-    parser.add_argument("--min-delta", type=float, default=None)
-    parser.add_argument("--max-group-size", type=int, default=None)
-    parser.add_argument("--wa", type=float, default=None)
-    parser.add_argument("--wr", type=float, default=None)
-    parser.add_argument("--wh", type=float, default=None)
-    parser.add_argument("--height-ref", type=float, default=None)
-    parser.add_argument("--p-height", type=float, default=None)
+    parser.add_argument("--group-seed-count", type=int, default=None)
+    parser.add_argument("--graph-top-k-neighbors", type=int, default=None)
+    parser.add_argument("--graph-aff-min", type=float, default=None)
+    parser.add_argument("--group-min-delta", type=float, default=None)
+    parser.add_argument("--group-max-size", type=int, default=None)
+    parser.add_argument("--group-score-wa", type=float, default=None)
+    parser.add_argument("--group-score-wr", type=float, default=None)
+    parser.add_argument("--group-score-wh", type=float, default=None)
+    parser.add_argument("--group-height-ref", type=float, default=None)
+    parser.add_argument("--group-height-p", type=float, default=None)
+    parser.add_argument("--subgroup-max-size", type=int, default=None)
+    parser.add_argument("--subgroup-size-gamma", type=float, default=None)
+    parser.add_argument("--subgroup-size-p", type=int, default=None)
+    parser.add_argument("--subgroup-height-weight", type=float, default=None)
+    parser.add_argument("--subgroup-seed-pairs-cap", type=int, default=None)
+    parser.add_argument("--subgroup-candidate-eval-cap", type=int, default=None)
+    parser.add_argument("--subgroup-allow-singleton", action="store_true")
+    parser.add_argument("--subgroup-singleton-strategy", type=str, default=None)
+    parser.add_argument("--unassigned-height-delta-max", type=float, default=None)
+    parser.add_argument("--unassigned-include", action="store_true")
+    parser.add_argument("--tray-base-area-max", type=float, default=None)
+    parser.add_argument("--tray-weight-max", type=float, default=None)
+    parser.add_argument("--tray-op-void", type=float, default=None)
+    parser.add_argument("--max-trays", type=int, default=None)
+    parser.add_argument("--trays-csv", type=str, default=str(DEFAULT_TRAYS_CSV))
+    parser.add_argument("--affinity-graph-json", type=str, default=str(DEFAULT_AFFINITY_JSON))
     parser.add_argument("--include-zero-rot", action="store_true")
+    parser.add_argument("--optimize", action="store_true")
+    parser.add_argument("--opt-iterations", type=int, default=10_000)
+    parser.add_argument("--opt-time-budget-ms", type=int, default=None)
+    parser.add_argument("--opt-seed", type=int, default=0)
+    parser.add_argument("--opt-anneal", action="store_true")
+    parser.add_argument("--opt-temp-start", type=float, default=1.0)
+    parser.add_argument("--opt-temp-end", type=float, default=0.01)
+    parser.add_argument("--opt-log-every", type=int, default=500)
+    parser.add_argument("--opt-log-path", type=str, default=str(DEFAULT_OPT_LOG))
+    parser.add_argument("--opt-trace-path", type=str, default=str(DEFAULT_OPT_TRACE))
+    parser.add_argument("--opt-trays-csv", type=str, default=str(DEFAULT_OPT_TRAYS_CSV))
+    parser.add_argument("--opt-report-path", type=str, default=str(DEFAULT_OPT_REPORT))
     return parser
 
 
@@ -70,145 +109,208 @@ def main() -> int:
         include_zero_rot=args.include_zero_rot,
     )
 
-    config = MicroSlottingConfig(
-        cycle_days=cycle_days,
-        seed_count=default_config.seed_count
-        if args.seed_count is None
-        else args.seed_count,
-        top_k_neighbors=default_config.top_k_neighbors
-        if args.top_k_neighbors is None
-        else args.top_k_neighbors,
-        aff_min=default_config.aff_min if args.aff_min is None else args.aff_min,
-        min_delta=default_config.min_delta if args.min_delta is None else args.min_delta,
-        max_group_size=default_config.max_group_size
-        if args.max_group_size is None
-        else args.max_group_size,
-        wa=default_config.wa if args.wa is None else args.wa,
-        wr=default_config.wr if args.wr is None else args.wr,
-        wh=default_config.wh if args.wh is None else args.wh,
-        height_ref=default_config.height_ref
-        if args.height_ref is None
-        else args.height_ref,
-        p_height=default_config.p_height if args.p_height is None else args.p_height,
-    )
+    config = _build_config(args, default_config, cycle_days)
 
     affinity_graph = build_affinity_graph(
         orders=orders,
-        top_k=config.top_k_neighbors,
-        aff_min=config.aff_min,
+        top_k=config.graph_top_k_neighbors,
+        aff_min=config.graph_aff_min,
         metric=config.affinity_metric,
     )
+    dump_affinity_graph_json(args.affinity_graph_json, affinity_graph)
+    print(f"- Affinity graph JSON written: {args.affinity_graph_json}")
     groups = build_groups(skus=skus, orders=orders, config=config)
     selected_groups = select_groups(groups=groups, skus=skus)
+    tray_plans = build_tray_plans(
+        selected_groups=selected_groups,
+        skus=skus,
+        affinity_graph=affinity_graph,
+        config=config,
+    )
+    all_trays = [tray for plan in tray_plans for tray in plan.trays]
 
-    top_groups = sorted(groups, key=lambda g: g.score, reverse=True)[:5]
-    avg_group_size = sum(len(g.sku_ids) for g in groups) / max(len(groups), 1)
-    selected_avg_group_size = sum(
-        len(g.sku_ids) for g in selected_groups
-    ) / max(len(selected_groups), 1)
-    selected_top = sorted(selected_groups, key=lambda g: g.score, reverse=True)[:5]
-    selected_skus = {sku_id for g in selected_groups for sku_id in g.sku_ids}
     sku_by_id = {sku.sku_id: sku for sku in skus}
-    total_cost = sum(
-        group_cost_cycle_volume(g.sku_ids, sku_by_id) for g in selected_groups
+    report = build_run_report(
+        skus=skus,
+        orders=orders,
+        groups=groups,
+        selected_groups=selected_groups,
+        tray_plans=tray_plans,
+        stats=stats,
     )
-    selected_details = []
-    for group in selected_groups:
-        cost = group_cost_cycle_volume(group.sku_ids, sku_by_id)
-        density = 1e12 if cost <= 0 else group.score / cost
-        rotation = sum(sku_by_id[sku_id].rot for sku_id in group.sku_ids)
-        selected_details.append((density, group.score, rotation, cost, group))
-    selected_details.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    for line in report.lines:
+        print(line)
 
-    print("Micro-slotting V1")
-    print(f"- SKUs: {len(skus)}")
-    print(f"- Orders: {len(orders)}")
-    print(f"- Groups: {len(groups)} (avg size {avg_group_size:.2f})")
-    print(
-        f"- Selected groups (Paso 6): {len(selected_groups)} "
-        f"(avg size {selected_avg_group_size:.2f}, "
-        f"unique SKUs {len(selected_skus)})"
-    )
-    print(
-        f"- Cycle days: {config.cycle_days}, Period days: {period_days}"
-    )
-    print(f"- Affinity min (effective): {config.aff_min}")
-    print(
-        f"- Affinity: {type(config.affinity_metric).__name__}, "
-        f"Scorer: {type(config.affinity_scorer).__name__}, "
-        f"Candidates: {type(config.candidate_selector).__name__}"
-    )
-    if stats.order_stats is not None:
+    csv_path = Path(args.trays_csv)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = trays_to_csv_rows(all_trays, sku_by_id, affinity_graph)
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerows(rows)
+    print(f"- Tray CSV written: {csv_path}")
+
+    if args.optimize:
+        subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
+        subgroups = list(subgroup_lookup.values())
+        hybrid = build_hybrid_kpi_state(
+            subgroups=subgroups,
+            trays=all_trays,
+            sku_by_id=sku_by_id,
+            affinity_graph=affinity_graph,
+            config=config,
+        )
+        opt_config = LocalSearchConfig(
+            iterations=args.opt_iterations,
+            time_budget_ms=args.opt_time_budget_ms,
+            seed=args.opt_seed,
+            allow_annealing=args.opt_anneal,
+            temp_start=args.opt_temp_start,
+            temp_end=args.opt_temp_end,
+            log_every=args.opt_log_every,
+            log_path=args.opt_log_path,
+            trace_path=args.opt_trace_path,
+        )
+        result = optimize(hybrid, opt_config)
         print(
-            f"- Orders kept: {stats.order_stats.total_orders} "
-            f"(lines kept {stats.order_stats.kept_rows}, "
-            f"skipped missing fields {stats.order_stats.skipped_missing_fields}, "
-            f"skipped missing master {stats.order_stats.skipped_missing_master})"
+            f"- Optimization: initial={result.initial_kpi:.6f} "
+            f"best={result.best_kpi:.6f} final={result.final_kpi:.6f}"
         )
-    print(
-        f"- SKUs excluded: missing data {stats.skipped_missing_data}, "
-        f"zero rot {stats.skipped_zero_rot}"
-    )
-    print(f"- Orders filtered empty: {stats.orders_filtered_empty}")
-    print("Top groups:")
-    for group in top_groups:
-        sku_preview = ", ".join(group.sku_ids[:5])
-        suffix = "..." if len(group.sku_ids) > 5 else ""
-        print(
-            f"- seed={group.seed_sku_id} size={len(group.sku_ids)} "
-            f"score={group.score:.4f} skus=[{sku_preview}{suffix}]"
+        _write_optimizer_report(
+            path=Path(args.opt_report_path),
+            result=result,
+            trays_before=all_trays,
+            trays_after=hybrid.all_trays(),
         )
-    all_affinities = [
-        neighbor.affinity
-        for neighbors in affinity_graph.values()
-        for neighbor in neighbors
-    ]
-    if all_affinities:
-        min_aff = min(all_affinities)
-        max_aff = max(all_affinities)
-        under_min = sum(1 for a in all_affinities if a < config.aff_min)
-        print(
-            f"- Affinity graph stats: edges={len(all_affinities)} "
-            f"min={min_aff:.4f} max={max_aff:.4f} "
-            f"under_aff_min={under_min}"
-        )
-    else:
-        print("- Affinity graph stats: no edges")
-    print("Affinity graph (sample):")
-    sample_seeds = sorted(skus, key=lambda s: s.rot, reverse=True)[:20]
-    for sku in sample_seeds:
-        neighbors = affinity_graph.get(sku.sku_id, [])
-        if not neighbors:
-            print(f"- {sku.sku_id}: (no neighbors)")
-            continue
-        preview = ", ".join(
-            f"{n.sku_id}:{n.affinity:.4f}" for n in neighbors[:10]
-        )
-        suffix = "..." if len(neighbors) > 10 else ""
-        print(f"- {sku.sku_id} -> {preview}{suffix}")
-    print("Top selected groups (Paso 6):")
-    for group in selected_top:
-        sku_preview = ", ".join(group.sku_ids[:5])
-        suffix = "..." if len(group.sku_ids) > 5 else ""
-        print(
-            f"- seed={group.seed_sku_id} size={len(group.sku_ids)} "
-            f"score={group.score:.4f} skus=[{sku_preview}{suffix}]"
-        )
-    print("Selected groups (Paso 6, full detail):")
-    for idx, (density, score, rotation, cost, group) in enumerate(selected_details, 1):
-        sku_list = ", ".join(group.sku_ids)
-        print(
-            f"{idx:04d}. seed={group.seed_sku_id} "
-            f"size={len(group.sku_ids)} "
-            f"score={score:.4f} "
-            f"density={density:.6f} "
-            f"rotation={rotation:.2f} "
-            f"cost={cost:.2f} "
-            f"skus=[{sku_list}]"
-        )
-    print(f"- Selected total cycle volume cost: {total_cost:.2f}")
+        opt_csv_path = Path(args.opt_trays_csv)
+        opt_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        opt_rows = trays_to_csv_rows(hybrid.all_trays(), sku_by_id, affinity_graph)
+        with opt_csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(opt_rows)
+        print(f"- Optimized tray CSV written: {opt_csv_path}")
 
     return 0
+
+
+def _build_config(
+    args: argparse.Namespace,
+    default_config: MicroSlottingConfig,
+    cycle_days: float,
+) -> MicroSlottingConfig:
+    return MicroSlottingConfig(
+        cycle_days=cycle_days,
+        group_seed_count=default_config.group_seed_count
+        if args.group_seed_count is None
+        else args.group_seed_count,
+        graph_top_k_neighbors=default_config.graph_top_k_neighbors
+        if args.graph_top_k_neighbors is None
+        else args.graph_top_k_neighbors,
+        graph_aff_min=default_config.graph_aff_min
+        if args.graph_aff_min is None
+        else args.graph_aff_min,
+        group_min_delta=default_config.group_min_delta
+        if args.group_min_delta is None
+        else args.group_min_delta,
+        group_max_size=default_config.group_max_size
+        if args.group_max_size is None
+        else args.group_max_size,
+        group_score_wa=default_config.group_score_wa
+        if args.group_score_wa is None
+        else args.group_score_wa,
+        group_score_wr=default_config.group_score_wr
+        if args.group_score_wr is None
+        else args.group_score_wr,
+        group_score_wh=default_config.group_score_wh
+        if args.group_score_wh is None
+        else args.group_score_wh,
+        group_height_ref=default_config.group_height_ref
+        if args.group_height_ref is None
+        else args.group_height_ref,
+        group_height_p=default_config.group_height_p
+        if args.group_height_p is None
+        else args.group_height_p,
+        subgroup_max_size=default_config.subgroup_max_size
+        if args.subgroup_max_size is None
+        else args.subgroup_max_size,
+        subgroup_size_gamma=default_config.subgroup_size_gamma
+        if args.subgroup_size_gamma is None
+        else args.subgroup_size_gamma,
+        subgroup_size_p=default_config.subgroup_size_p
+        if args.subgroup_size_p is None
+        else args.subgroup_size_p,
+        subgroup_height_weight=default_config.subgroup_height_weight
+        if args.subgroup_height_weight is None
+        else args.subgroup_height_weight,
+        subgroup_seed_pairs_cap=default_config.subgroup_seed_pairs_cap
+        if args.subgroup_seed_pairs_cap is None
+        else args.subgroup_seed_pairs_cap,
+        subgroup_candidate_eval_cap=default_config.subgroup_candidate_eval_cap
+        if args.subgroup_candidate_eval_cap is None
+        else args.subgroup_candidate_eval_cap,
+        subgroup_allow_singleton=default_config.subgroup_allow_singleton
+        if not args.subgroup_allow_singleton
+        else args.subgroup_allow_singleton,
+        subgroup_singleton_strategy=default_config.subgroup_singleton_strategy
+        if args.subgroup_singleton_strategy is None
+        else args.subgroup_singleton_strategy,
+        unassigned_height_delta_max=default_config.unassigned_height_delta_max
+        if args.unassigned_height_delta_max is None
+        else args.unassigned_height_delta_max,
+        unassigned_include=default_config.unassigned_include
+        if not args.unassigned_include
+        else args.unassigned_include,
+        tray_base_area_max=default_config.tray_base_area_max
+        if args.tray_base_area_max is None
+        else args.tray_base_area_max,
+        tray_weight_max=default_config.tray_weight_max
+        if args.tray_weight_max is None
+        else args.tray_weight_max,
+        tray_op_void=default_config.tray_op_void
+        if args.tray_op_void is None
+        else args.tray_op_void,
+        max_trays=default_config.max_trays if args.max_trays is None else args.max_trays,
+    )
+
+
+def _write_optimizer_report(
+    path: Path,
+    result: OptimizationResult,
+    trays_before: list,
+    trays_after: list,
+) -> None:
+    before_stats = _tray_stats(trays_before)
+    after_stats = _tray_stats(trays_after)
+    lines = [
+        "Optimizer report",
+        f"- Initial KPI: {result.initial_kpi:.6f}",
+        f"- Best KPI: {result.best_kpi:.6f}",
+        f"- Final KPI: {result.final_kpi:.6f}",
+        f"- Iterations: {result.iterations}",
+        f"- Accepts: {result.accepts} | Rejects: {result.rejects}",
+        "",
+        "Trays (before -> after):",
+        f"- Count: {before_stats['count']} -> {after_stats['count']}",
+        f"- Area used: {before_stats['area_used']:.2f} -> {after_stats['area_used']:.2f}",
+        f"- Weight used: {before_stats['weight_used']:.2f} -> {after_stats['weight_used']:.2f}",
+        f"- Max height avg: {before_stats['avg_height']:.2f} -> {after_stats['avg_height']:.2f}",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"- Optimizer report written: {path}")
+
+
+def _tray_stats(trays: list) -> dict[str, float]:
+    if not trays:
+        return {"count": 0, "area_used": 0.0, "weight_used": 0.0, "avg_height": 0.0}
+    area_used = sum(tray.area_used for tray in trays)
+    weight_used = sum(tray.weight_used for tray in trays)
+    avg_height = sum(tray.height for tray in trays) / len(trays)
+    return {
+        "count": len(trays),
+        "area_used": area_used,
+        "weight_used": weight_used,
+        "avg_height": avg_height,
+    }
 
 
 if __name__ == "__main__":

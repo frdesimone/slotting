@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from slotting.algorithms.micro.config import MicroSlottingConfig
 from slotting.algorithms.micro.group_score import group_score
+from slotting.algorithms.micro.strategies import AffinityGraph
 from slotting.models import AffinityGroup, Order, SKU
 from .affinity_graph import build_affinity_graph
 
@@ -44,7 +45,7 @@ def _group_score(
     seed_id: str,
     group_ids: list[str],
     sku_by_id: dict[str, SKU],
-    affinity_graph: dict[str, list],
+    affinity_graph: AffinityGraph,
     config: MicroSlottingConfig,
 ) -> float:
     return group_score(
@@ -59,18 +60,18 @@ def _group_score(
 def _build_affinity_graph(
     orders: Iterable[Order],
     config: MicroSlottingConfig,
-) -> dict[str, list]:
+) -> AffinityGraph:
     return build_affinity_graph(
         orders=orders,
-        top_k=config.top_k_neighbors,
-        aff_min=config.aff_min,
+        top_k=config.graph_top_k_neighbors,
+        aff_min=config.graph_aff_min,
         metric=config.affinity_metric,
     )
 
 
 def _select_seeds(sku_list: list[SKU], config: MicroSlottingConfig) -> list[SKU]:
     sorted_skus = sorted(sku_list, key=lambda s: s.rot, reverse=True)
-    seed_count = min(config.seed_count, len(sorted_skus))
+    seed_count = min(config.group_seed_count, len(sorted_skus))
     if seed_count <= 0:
         return []
 
@@ -130,7 +131,7 @@ def _select_seeds(sku_list: list[SKU], config: MicroSlottingConfig) -> list[SKU]
 def _build_group_for_seed(
     seed: SKU,
     sku_by_id: dict[str, SKU],
-    affinity_graph: dict[str, list],
+    affinity_graph: AffinityGraph,
     config: MicroSlottingConfig,
 ) -> AffinityGroup:
     group_ids = [seed.sku_id]
@@ -147,7 +148,7 @@ def _build_group_for_seed(
     )
 
     while True:
-        if len(group_ids) >= config.max_group_size:
+        if len(group_ids) >= config.group_max_size:
             break
 
         best_delta = None
@@ -168,7 +169,7 @@ def _build_group_for_seed(
                 best_delta = delta
                 best_candidate = (candidate_id, new_score)
 
-        if best_delta is None or best_delta < config.min_delta:
+        if best_delta is None or best_delta < config.group_min_delta:
             break
 
         group_ids.append(best_candidate[0])

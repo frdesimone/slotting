@@ -5,9 +5,8 @@ from itertools import combinations
 from typing import Iterable
 
 from slotting.models import AffinityNeighbor, Order
-from slotting.algorithms.micro.strategies import AffinityMetric
+from slotting.algorithms.micro.strategies import AffinityMetric, AffinityGraph
 
-AffinityGraph = dict[str, list[AffinityNeighbor]]
 OrdersWith = dict[str, int]
 OrdersWithBoth = dict[tuple[str, str], int]
 

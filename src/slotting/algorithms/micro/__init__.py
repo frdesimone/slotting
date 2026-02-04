@@ -15,6 +15,7 @@ from .strategies import (
 )
 from .group_score import group_score
 from .selection import select_groups
+from .step7 import build_tray_plans, trays_to_csv_rows
 
 __all__ = [
     "AffinityMetric",
@@ -28,9 +29,11 @@ __all__ = [
     "TwoHopCandidateSelector",
     "build_affinity_graph",
     "build_groups",
+    "build_tray_plans",
     "group_score",
     "select_groups",
     "load_micro_slotting_inputs",
     "load_micro_slotting_inputs_with_stats",
     "MicroSlottingConfig",
+    "trays_to_csv_rows",
 ]

@@ -20,6 +20,7 @@ class SkuRecord:
 def load_sku_records_from_codes(
     path: str | Path,
 ) -> dict[str, SkuRecord]:
+    """Load SKU master data from CSV, merging duplicate SKU rows."""
     rows = read_csv_rows(path)
     header_map, data_rows = find_header(
         rows,
@@ -88,6 +89,7 @@ def derive_volume_from_mm(
     width_mm: float | None,
     length_mm: float | None,
 ) -> float | None:
+    """Derive m³ volume from mm dimensions."""
     if height_mm is None or width_mm is None or length_mm is None:
         return None
     return (height_mm / 1000.0) * (width_mm / 1000.0) * (length_mm / 1000.0)

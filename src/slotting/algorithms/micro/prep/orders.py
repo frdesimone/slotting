@@ -12,6 +12,7 @@ def load_orders_from_pedidos(
     path: str | Path,
     allowed_skus: set[str] | None = None,
 ) -> tuple[list[Order], dict[str, int], dict[str, float], OrderLoadStats]:
+    """Load orders from CSV and compute per-SKU rotation + units."""
     rows = read_csv_rows(path)
     stats = OrderLoadStats()
     header_map, data_rows = find_header(

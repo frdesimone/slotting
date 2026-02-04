@@ -15,6 +15,7 @@ def load_micro_slotting_inputs(
     period_days: float = 180.0,
     include_zero_rot: bool = False,
 ) -> tuple[list[SKU], list[Order]]:
+    """Load SKU + Order inputs from CSV files (prep pipeline)."""
     skus, orders, _ = load_micro_slotting_inputs_with_stats(
         codes_csv_path=codes_csv_path,
         orders_csv_path=orders_csv_path,
@@ -74,6 +75,7 @@ def _build_skus(
     include_zero_rot: bool,
     stats: PrepStats,
 ) -> list[SKU]:
+    """Build validated SKU objects with cycle units and rotation."""
     skus: list[SKU] = []
     for sku_id, record in sku_records.items():
         rot = rot_by_sku.get(sku_id, 0)
@@ -119,6 +121,7 @@ def _filter_orders_by_skus(
     skus: list[SKU],
     stats: PrepStats,
 ) -> list[Order]:
+    """Remove SKUs missing from master data and drop empty orders."""
     valid_skus = {sku.sku_id for sku in skus}
     filtered_orders: list[Order] = []
     for order in orders:

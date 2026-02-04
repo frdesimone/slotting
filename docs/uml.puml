@@ -19,9 +19,12 @@ class Order {
 class Tray {
   +tray_id: str
   +group_id: str
+  +subgroup_id: str
   +height: float
-  +max_volume: float
+  +max_area: float
   +max_weight: float
+  +area_used: float
+  +weight_used: float
 }
 
 class TrayItem {
@@ -31,6 +34,8 @@ class TrayItem {
   +unit_weight: float
   +total_volume: float
   +total_weight: float
+  +unit_area: float
+  +total_area: float
 }
 
 class VLM {
@@ -53,19 +58,32 @@ class TrayAssignment {
 
 class MicroSlottingConfig {
   +cycle_days: float
-  +top_k_neighbors: int
-  +aff_min: float
+  +graph_top_k_neighbors: int
+  +graph_aff_min: float
   +affinity_metric: AffinityMetric
   +affinity_scorer: AffinityScorer
   +candidate_selector: CandidateSelector
-  +seed_count: int
-  +min_delta: float
-  +max_group_size: int
-  +wa: float
-  +wr: float
-  +wh: float
-  +height_ref: float
-  +p_height: float
+  +group_seed_count: int
+  +group_min_delta: float
+  +group_max_size: int
+  +group_score_wa: float
+  +group_score_wr: float
+  +group_score_wh: float
+  +group_height_ref: float
+  +group_height_p: float
+  +subgroup_max_size: int
+  +subgroup_size_gamma: float
+  +subgroup_size_p: int
+  +subgroup_height_weight: float
+  +subgroup_seed_pairs_cap: int
+  +subgroup_candidate_eval_cap: int
+  +subgroup_allow_singleton: bool
+  +subgroup_singleton_strategy: str
+  +unassigned_height_delta_max: float
+  +unassigned_include: bool
+  +tray_base_area_max: float
+  +tray_weight_max: float
+  +tray_op_void: float
 }
 
 class AffinityMetric
@@ -83,8 +101,22 @@ class AffinityGroup {
   +score: float
 }
 
+class Subgroup {
+  +subgroup_id: str
+  +group_id: str
+  +sku_ids: list[str]
+  +score: float
+}
+
+class TrayPlan {
+  +group_id: str
+  +subgroups: list[Subgroup]
+  +trays: list[Tray]
+}
+
 Order "*" -- "*" SKU : contains
 AffinityGroup "*" -- "*" SKU : groups
+Subgroup "*" -- "*" SKU : subgroups
 AffinityNeighbor "*" -- "1" SKU : neighbor
 Tray "1" -- "*" TrayItem : contains
 

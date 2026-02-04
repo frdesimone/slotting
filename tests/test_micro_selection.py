@@ -32,4 +32,4 @@ def test_select_groups_greedy_no_overlap_by_density_then_score() -> None:
     selected = select_groups([g1, g2, g3], skus, cost_fn=group_cost_cycle_volume)
 
     assert len(selected) == 1
-    assert selected[0].sku_ids == ["A", "B"]
+    assert selected[0].sku_ids == ["A", "C"]

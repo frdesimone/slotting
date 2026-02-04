@@ -15,23 +15,44 @@ from slotting.algorithms.micro.strategies import (
 @dataclass(frozen=True)
 class MicroSlottingConfig:
     cycle_days: float = 7.0
-    top_k_neighbors: int = 30
-    aff_min: float = 0.1
+    graph_top_k_neighbors: int = 50
+    graph_aff_min: float = 0.08
     affinity_metric: AffinityMetric = field(default_factory=JaccardMetric)
     affinity_scorer: AffinityScorer = field(default_factory=StarAffinityScorer)
     candidate_selector: CandidateSelector = field(
         default_factory=OneHopCandidateSelector
     )
-    seed_count: int = 300
-    min_delta: float = 0.0
-    max_group_size: int = 12
-    wa: float = 0.75
-    wr: float = 0.1
-    wh: float = 0.15
-    height_ref: float = 0.25
-    p_height: float = 2.0
+    group_seed_count: int = 500
+    group_min_delta: float = 0.0
+    group_max_size: int = 16
+    group_score_wa: float = 0.75
+    group_score_wr: float = 0.1
+    group_score_wh: float = 0.15
+    group_height_ref: float = 25.0
+    group_height_p: float = 2.0
+    subgroup_max_size: int = 10
+    subgroup_size_gamma: float = 0.2
+    subgroup_size_p: int = 2
+    subgroup_height_weight: float = 0.5
+    subgroup_height_dispersion_mode: str = "range"
+    subgroup_seed_pairs_cap: int = 20
+    subgroup_candidate_eval_cap: int = 10
+    subgroup_allow_singleton: bool = False
+    subgroup_singleton_strategy: str = "min_loss"
+    unassigned_height_delta_max: float = 30.0
+    unassigned_include: bool = True
+    tray_base_area_max: float = 3513700.0
+    tray_weight_max: float = 750.0
+    tray_op_void: float = 0.10
+    max_trays: int = 256
 
     def __post_init__(self) -> None:
+        self._validate_strategy_inputs()
+        self._validate_grouping_params()
+        self._validate_subgroup_params()
+        self._validate_tray_params()
+
+    def _validate_strategy_inputs(self) -> None:
         if not isinstance(self.affinity_metric, AffinityMetric):
             raise ValueError("affinity_metric must be an instance of AffinityMetric")
         if not isinstance(self.affinity_scorer, AffinityScorer):
@@ -40,21 +61,55 @@ class MicroSlottingConfig:
             raise ValueError(
                 "candidate_selector must be an instance of CandidateSelector"
             )
+
+    def _validate_grouping_params(self) -> None:
         if self.cycle_days <= 0:
             raise ValueError("cycle_days must be > 0")
-        if self.top_k_neighbors <= 0:
-            raise ValueError("top_k_neighbors must be > 0")
-        if not 0 <= self.aff_min <= 1:
-            raise ValueError("aff_min must be between 0 and 1")
-        if self.seed_count <= 0:
-            raise ValueError("seed_count must be > 0")
-        if self.max_group_size <= 0:
-            raise ValueError("max_group_size must be > 0")
-        if self.min_delta < 0:
-            raise ValueError("min_delta must be >= 0")
-        if self.wa < 0 or self.wr < 0 or self.wh < 0:
-            raise ValueError("wa/wr/wh must be >= 0")
-        if self.height_ref <= 0:
-            raise ValueError("height_ref must be > 0")
-        if self.p_height <= 0:
-            raise ValueError("p_height must be > 0")
+        if self.graph_top_k_neighbors <= 0:
+            raise ValueError("graph_top_k_neighbors must be > 0")
+        if not 0 <= self.graph_aff_min <= 1:
+            raise ValueError("graph_aff_min must be between 0 and 1")
+        if self.group_seed_count <= 0:
+            raise ValueError("group_seed_count must be > 0")
+        if self.group_max_size <= 0:
+            raise ValueError("group_max_size must be > 0")
+        if self.group_min_delta < 0:
+            raise ValueError("group_min_delta must be >= 0")
+        if self.group_score_wa < 0 or self.group_score_wr < 0 or self.group_score_wh < 0:
+            raise ValueError("group_score_wa/wr/wh must be >= 0")
+        if self.group_height_ref <= 0:
+            raise ValueError("group_height_ref must be > 0")
+        if self.group_height_p <= 0:
+            raise ValueError("group_height_p must be > 0")
+
+    def _validate_subgroup_params(self) -> None:
+        if self.subgroup_max_size < 2:
+            raise ValueError("subgroup_max_size must be >= 2")
+        if self.subgroup_size_gamma < 0:
+            raise ValueError("subgroup_size_gamma must be >= 0")
+        if self.subgroup_size_p < 2:
+            raise ValueError("subgroup_size_p must be >= 2")
+        if self.subgroup_height_weight < 0:
+            raise ValueError("subgroup_height_weight must be >= 0")
+        if self.subgroup_height_dispersion_mode != "range":
+            raise ValueError("subgroup_height_dispersion_mode must be range")
+        if self.subgroup_seed_pairs_cap < 0:
+            raise ValueError("subgroup_seed_pairs_cap must be >= 0")
+        if self.subgroup_candidate_eval_cap < 0:
+            raise ValueError("subgroup_candidate_eval_cap must be >= 0")
+        if self.subgroup_singleton_strategy not in {"min_loss", "allow_singleton"}:
+            raise ValueError(
+                "subgroup_singleton_strategy must be min_loss or allow_singleton"
+            )
+        if self.unassigned_height_delta_max < 0:
+            raise ValueError("unassigned_height_delta_max must be >= 0")
+
+    def _validate_tray_params(self) -> None:
+        if self.tray_base_area_max <= 0:
+            raise ValueError("tray_base_area_max must be > 0")
+        if self.tray_weight_max <= 0:
+            raise ValueError("tray_weight_max must be > 0")
+        if not 0 <= self.tray_op_void < 1:
+            raise ValueError("tray_op_void must be between 0 and 1")
+        if self.max_trays <= 0:
+            raise ValueError("max_trays must be > 0")

@@ -3,9 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from slotting.models import AffinityNeighbor
+from typing import TypeAlias
 
-
-AffinityGraph = dict[str, list[AffinityNeighbor]]
+AffinityGraph: TypeAlias = dict[str, list[AffinityNeighbor]]
 
 
 class AffinityMetric(ABC):

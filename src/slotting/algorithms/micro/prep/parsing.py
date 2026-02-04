@@ -6,6 +6,7 @@ import unicodedata
 
 
 def read_csv_rows(path: str | Path) -> list[list[str]]:
+    """Read CSV rows with UTF-8 BOM handling."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"CSV not found: {path}")
@@ -18,6 +19,7 @@ def find_header(
     required_headers: set[str],
     source: str,
 ) -> tuple[dict[str, int], list[list[str]]]:
+    """Find header row matching required headers and return the data rows."""
     for index, row in enumerate(rows):
         header_map = {}
         for col_index, value in enumerate(row):
@@ -36,12 +38,14 @@ def find_header(
 
 
 def normalize_header(value: str) -> str:
+    """Normalize headers (case/spacing/accents)."""
     text = unicodedata.normalize("NFKD", value)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return " ".join(text.strip().lower().split())
 
 
 def parse_cell(value: str) -> str | None:
+    """Return a cleaned non-empty cell."""
     cleaned = value.strip() if value else ""
     if not cleaned:
         return None
@@ -49,6 +53,7 @@ def parse_cell(value: str) -> str | None:
 
 
 def parse_sku_id(value: str) -> str | None:
+    """Parse SKU id, ignoring invalid or placeholder values."""
     if not value:
         return None
     cleaned = value.replace(",", "").strip()
@@ -58,6 +63,7 @@ def parse_sku_id(value: str) -> str | None:
 
 
 def parse_float(value: str) -> float | None:
+    """Parse float from localized strings, ignoring invalid tokens."""
     if not value:
         return None
     cleaned = value.replace(",", "").strip()

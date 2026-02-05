@@ -1,6 +1,6 @@
 from .affinity_graph import build_affinity_graph
 from .grouping import build_groups
-from .prep import load_micro_slotting_inputs, load_micro_slotting_inputs_with_stats
+from slotting.algorithms.common.prep import load_slotting_inputs
 from .config import MicroSlottingConfig
 from .strategies import (
     AffinityMetric,
@@ -32,8 +32,8 @@ __all__ = [
     "build_tray_plans",
     "group_score",
     "select_groups",
-    "load_micro_slotting_inputs",
-    "load_micro_slotting_inputs_with_stats",
+    "load_slotting_inputs",
+    "load_slotting_inputs_with_stats",
     "MicroSlottingConfig",
     "trays_to_csv_rows",
 ]

@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from slotting.algorithms.micro.prep.codes import load_sku_records_from_codes
+from slotting.algorithms.common.prep.codes import load_sku_records_from_codes
 from slotting.models import SKU, Subgroup, Tray, TrayItem
 
 

@@ -7,8 +7,11 @@ from slotting.algorithms.micro import (
     build_affinity_graph,
     build_groups,
     build_tray_plans,
-    load_micro_slotting_inputs_with_stats,
     select_groups,
+)
+
+from slotting.algorithms.common.prep import (
+    load_slotting_inputs_with_stats
 )
 
 
@@ -80,7 +83,7 @@ def test_end_to_end_csv_like_docs(tmp_path: Path) -> None:
         unassigned_include=False,
     )
 
-    skus, orders, _ = load_micro_slotting_inputs_with_stats(
+    skus, orders, _ = load_slotting_inputs_with_stats(
         codes_csv_path=codes_path,
         orders_csv_path=orders_path,
         cycle_days=config.cycle_days,

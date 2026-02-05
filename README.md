@@ -23,12 +23,12 @@ Ejemplo de uso:
 from slotting.algorithms.micro import (
     MicroSlottingConfig,
     build_groups,
-    load_micro_slotting_inputs,
+    load_slotting_inputs,
     select_groups,
 )
 
 config = MicroSlottingConfig()
-skus, orders = load_micro_slotting_inputs(
+skus, orders = load_slotting_inputs(
     codes_csv_path="docs/Base de códigos - semestre jun-nov  (11-1-2026) - Std Logix.xlsx - Base cód. segun pedidos-final.csv",
     orders_csv_path="docs/Base de pedidos - semestre jun-nov  (2-1-2026) - Std Logix.xlsx - Consolidado pedidos.csv",
     cycle_days=config.cycle_days,

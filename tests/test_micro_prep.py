@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from slotting.algorithms.micro.prep import load_micro_slotting_inputs_with_stats
+from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
 
 
 def _write_csv(path: Path, rows: list[list[str]]) -> None:
@@ -12,7 +12,7 @@ def _write_csv(path: Path, rows: list[list[str]]) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_load_micro_slotting_inputs_combines_and_filters(tmp_path: Path) -> None:
+def test_load_slotting_inputs_combines_and_filters(tmp_path: Path) -> None:
     codes_path = tmp_path / "codes.csv"
     orders_path = tmp_path / "orders.csv"
 
@@ -41,7 +41,7 @@ def test_load_micro_slotting_inputs_combines_and_filters(tmp_path: Path) -> None
         ],
     )
 
-    skus, orders, stats = load_micro_slotting_inputs_with_stats(
+    skus, orders, stats = load_slotting_inputs_with_stats(
         codes_path,
         orders_path,
         cycle_days=10,

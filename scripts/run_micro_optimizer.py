@@ -9,7 +9,7 @@ from slotting.algorithms.micro import (
     MicroSlottingConfig,
     build_affinity_graph,
     build_groups,
-    load_micro_slotting_inputs_with_stats,
+    load_slotting_inputs_with_stats,
     select_groups,
     build_tray_plans,
     trays_to_csv_rows,
@@ -161,7 +161,7 @@ def main() -> int:
     period_days = 180.0 if args.period_days is None else args.period_days
 
     if args.input_mode == "pipeline":
-        skus, orders, _ = load_micro_slotting_inputs_with_stats(
+        skus, orders, _ = load_slotting_inputs_with_stats(
             codes_csv_path=codes_csv,
             orders_csv_path=orders_csv,
             cycle_days=cycle_days,

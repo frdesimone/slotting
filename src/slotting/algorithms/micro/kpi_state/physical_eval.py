@@ -12,6 +12,10 @@ class PhysicalPreviewResult:
     is_valid: bool
     reasons: list[str]
     new_trays_by_subgroup: dict[str, list[Tray]] | None = None
+    tray_count_before: int = 0
+    tray_count_after: int = 0
+    area_waste_ratio_before: float = 0.0
+    area_waste_ratio_after: float = 0.0
 
 
 class PhysicalTrayState:
@@ -36,6 +40,15 @@ class PhysicalTrayState:
     def all_trays(self) -> list[Tray]:
         return [tray for trays in self._trays_by_subgroup.values() for tray in trays]
 
+    def tray_count(self) -> int:
+        return self._total_trays()
+
+    def area_waste_ratio(self) -> float:
+        used, capacity = self._area_used_capacity(self.all_trays())
+        if capacity <= 0:
+            return 0.0
+        return max(capacity - used, 0.0) / capacity
+
     def preview_subgroup_change(
         self, new_sku_ids: dict[str, list[str]]
     ) -> PhysicalPreviewResult:
@@ -57,8 +70,20 @@ class PhysicalTrayState:
         if self._exceeds_max_trays(old_count, new_count):
             total_after = self._total_trays() - old_count + new_count
             reasons.append(f"max_trays_exceeded:{total_after}>{self._config.max_trays}")
+        trays_before = self._total_trays()
+        trays_after = trays_before - old_count + new_count
+        area_waste_ratio_before = self.area_waste_ratio()
+        area_waste_ratio_after = self._preview_area_waste_ratio(new_trays_by_subgroup)
 
-        return PhysicalPreviewResult(not reasons, reasons, new_trays_by_subgroup)
+        return PhysicalPreviewResult(
+            not reasons,
+            reasons,
+            new_trays_by_subgroup,
+            tray_count_before=trays_before,
+            tray_count_after=trays_after,
+            area_waste_ratio_before=area_waste_ratio_before,
+            area_waste_ratio_after=area_waste_ratio_after,
+        )
 
     def apply_subgroup_change(self, new_trays_by_subgroup: dict[str, list[Tray]]) -> None:
         for sg_id, trays in new_trays_by_subgroup.items():
@@ -96,3 +121,33 @@ class PhysicalTrayState:
     def _exceeds_max_trays(self, old_count: int, new_count: int) -> bool:
         total_after = self._total_trays() - old_count + new_count
         return total_after > self._config.max_trays
+
+    def _preview_area_waste_ratio(
+        self,
+        new_trays_by_subgroup: dict[str, list[Tray]],
+    ) -> float:
+        used = 0.0
+        capacity = 0.0
+        replaced = set(new_trays_by_subgroup.keys())
+        for sg_id, trays in self._trays_by_subgroup.items():
+            if sg_id in replaced:
+                continue
+            area_used, area_capacity = self._area_used_capacity(trays)
+            used += area_used
+            capacity += area_capacity
+        for trays in new_trays_by_subgroup.values():
+            area_used, area_capacity = self._area_used_capacity(trays)
+            used += area_used
+            capacity += area_capacity
+        if capacity <= 0:
+            return 0.0
+        return max(capacity - used, 0.0) / capacity
+
+    @staticmethod
+    def _area_used_capacity(trays: list[Tray]) -> tuple[float, float]:
+        used = 0.0
+        capacity = 0.0
+        for tray in trays:
+            used += tray.area_used
+            capacity += tray.max_area
+        return used, capacity

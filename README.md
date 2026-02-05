@@ -54,12 +54,12 @@ Notas:
 ### Flujo de micro-slotting (resumen)
 
 1) Construir el grafo de afinidades (Jaccard + top-K + aff_min).
-2) Elegir seeds (top rotación) y generar grupos con greedy.
+2) Elegir seeds con estrategia estratificada y generar grupos con greedy.
 3) Scoring de grupo (afinidad + rotación - penalización de altura).
-4) Deduplicación y selección sin solapamientos (Paso 6).
+4) Deduplicación y selección sin solapamientos (Paso 6, por score por defecto).
 5) Paso 7: subgrupos + bandejas físicas (capacidad por base + peso).
 6) Opcional: SKU no asignados (fuera de Paso 6) se empaquetan por altura/afinidad si `include_unassigned_skus` está activo.
-7) Opcional: Optimización local con swaps/relocates (greedy + annealing) usando validación híbrida (lógico + físico).
+7) Opcional: Optimización local con swaps/relocates (greedy + annealing) usando KPI híbrido (lógico + físico).
 
 ### Modulos principales
 
@@ -74,7 +74,7 @@ Unidades:
 - Volumen (`volume`) en m³.
 - Área base se deriva como `volume / height` y se expresa en mm².
 - Capacidad base de bandeja por defecto: 4100 x 857 mm = 3,513,700 mm².
-- Para SKUs no asignados, se usa un delta máximo de altura configurable (`subgroup_height_delta_max`).
+- Para SKUs no asignados, se usa un delta máximo de altura configurable (`unassigned_height_delta_max`).
 - `cycle_units` se redondea hacia arriba (`ceil`).
 - La asignación física usa unidades enteras (`floor`) por bandeja.
 
@@ -94,13 +94,17 @@ Optimizador y swaps: `docs/micro_optimizer_and_swaps.md`.
 python scripts/run_micro_slotting.py
 ```
 
-Parametros utiles: `--cycle-days`, `--period-days`, `--group-seed-count`, `--graph-top-k-neighbors`, `--graph-aff-min`, `--group-max-size`.
+Parametros utiles: `--cycle-days`, `--period-days`, `--group-seed-count`, `--group-seed-strategy`,
+`--graph-top-k-neighbors`, `--graph-aff-min`, `--group-max-size`, `--selection-cost-mode`.
 - El output son `AffinityGroup` en memoria (aun sin salida fisica).
 
 Nuevos parametros (Paso 7):
 - `--subgroup-max-size`, `--subgroup-size-gamma`, `--subgroup-size-p`, `--subgroup-height-weight`
+- `--subgroup-min-delta`
+- `--subgroup-marginal-tray-weight`, `--subgroup-marginal-area-waste-weight`
 - `--unassigned-height-delta-max` (para re-asignar SKUs no seleccionados)
 - `--unassigned-include`
+- `--no-unassigned-include`
 - `--tray-base-area-max`, `--tray-weight-max`, `--tray-op-void`, `--trays-csv`
 - `--max-trays`
 
@@ -109,6 +113,7 @@ Optimizacion (pipeline):
 - `--opt-iterations`, `--opt-time-budget-ms`, `--opt-seed`, `--opt-anneal`
 - `--opt-temp-start`, `--opt-temp-end`, `--opt-log-every`
 - `--opt-log-path`, `--opt-trace-path`, `--opt-trays-csv`, `--opt-report-path`
+- `--optimizer-tray-count-weight`, `--optimizer-area-waste-weight`
 
 Optimizacion (standalone):
 ```bash

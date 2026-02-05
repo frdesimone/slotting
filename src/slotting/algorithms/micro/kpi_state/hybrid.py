@@ -30,7 +30,10 @@ class HybridKpiState:
 
     @property
     def global_kpi(self) -> float:
-        return self._logical.global_kpi
+        """Hybrid KPI: logical KPI minus physical penalty (trays + area waste)."""
+        return self._logical.global_kpi - self._physical_penalty(
+            self._physical.tray_count(), self._physical.area_waste_ratio()
+        )
 
     def subgroup_ids(self) -> list[str]:
         return list(self._logical.subgroups.keys())
@@ -74,9 +77,15 @@ class HybridKpiState:
                 reasons=physical.reasons,
                 physical=physical,
             )
+        delta_physical = self._physical_penalty(
+            physical.tray_count_after, physical.area_waste_ratio_after
+        ) - self._physical_penalty(
+            physical.tray_count_before, physical.area_waste_ratio_before
+        )
+        delta_total = logical.delta_global_kpi - delta_physical
         return HybridPreviewResult(
             is_valid=True,
-            delta_global_kpi=logical.delta_global_kpi,
+            delta_global_kpi=delta_total,
             deltas_by_subgroup=logical.deltas_by_subgroup,
             reasons=[],
             physical=physical,
@@ -90,9 +99,23 @@ class HybridKpiState:
                 delta_global_kpi=0.0,
                 deltas_by_subgroup={},
                 reasons=preview.reasons,
-                global_kpi=self._logical.global_kpi,
+                global_kpi=self.global_kpi,
             )
-        logical = self._logical.apply_move(move)
+        self._logical.apply_move(move)
         if preview.physical.new_trays_by_subgroup is not None:
             self._physical.apply_subgroup_change(preview.physical.new_trays_by_subgroup)
-        return logical
+        return ApplyResult(
+            is_valid=True,
+            delta_global_kpi=preview.delta_global_kpi,
+            deltas_by_subgroup=preview.deltas_by_subgroup,
+            reasons=[],
+            global_kpi=self.global_kpi,
+        )
+
+    def _physical_penalty(self, tray_count: int, area_waste_ratio: float) -> float:
+        """Penalty term used by the hybrid KPI (smaller is better)."""
+        config = self._logical._config  # type: ignore[attr-defined]
+        return (
+            config.optimizer_tray_count_weight * float(tray_count)
+            + config.optimizer_area_waste_weight * float(area_waste_ratio)
+        )

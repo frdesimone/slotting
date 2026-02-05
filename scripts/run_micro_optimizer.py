@@ -39,9 +39,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run micro-slotting optimizer with configurable flags.",
     )
-    input_group = parser.add_mutually_exclusive_group()
-    input_group.add_argument("--input-mode", choices=["pipeline", "trays", "state-json"], default="trays")
-    parser.add_argument(
+    io_group = parser.add_argument_group("Inputs")
+    group_group = parser.add_argument_group("Grouping")
+    subgroup_group = parser.add_argument_group("Subgrouping")
+    unassigned_group = parser.add_argument_group("Unassigned")
+    tray_group = parser.add_argument_group("Trays")
+    optimize_group = parser.add_argument_group("Optimizer")
+
+    io_group.add_argument("--input-mode", choices=["pipeline", "trays", "state-json"], default="trays")
+    io_group.add_argument(
         "--codes-csv",
         default=str(
             REPO_ROOT
@@ -49,7 +55,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
         help="Path to master codes CSV.",
     )
-    parser.add_argument(
+    io_group.add_argument(
         "--orders-csv",
         default=str(
             REPO_ROOT
@@ -57,55 +63,86 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
         help="Path to orders CSV.",
     )
-    parser.add_argument("--input-trays-csv", type=str, default=str(REPO_ROOT / "outputs" / "trays.csv"))
-    parser.add_argument(
+    io_group.add_argument("--input-trays-csv", type=str, default=str(REPO_ROOT / "outputs" / "trays.csv"))
+    io_group.add_argument(
         "--affinity-graph-json", type=str, default=str(REPO_ROOT / "outputs" / "affinity_graph.json")
     )
-    parser.add_argument("--sku-rot-csv", type=str, default=None)
-    parser.add_argument("--state-json", type=str, default=None)
-    parser.add_argument("--state-out-json", type=str, default=None)
-    parser.add_argument("--moves-json", type=str, default=None)
-    parser.add_argument("--apply-only", action="store_true")
-    parser.add_argument("--cycle-days", type=float, default=None)
-    parser.add_argument("--period-days", type=float, default=None)
-    parser.add_argument("--group-seed-count", type=int, default=None)
-    parser.add_argument("--graph-top-k-neighbors", type=int, default=None)
-    parser.add_argument("--graph-aff-min", type=float, default=None)
-    parser.add_argument("--group-min-delta", type=float, default=None)
-    parser.add_argument("--group-max-size", type=int, default=None)
-    parser.add_argument("--group-score-wa", type=float, default=None)
-    parser.add_argument("--group-score-wr", type=float, default=None)
-    parser.add_argument("--group-score-wh", type=float, default=None)
-    parser.add_argument("--group-height-ref", type=float, default=None)
-    parser.add_argument("--group-height-p", type=float, default=None)
-    parser.add_argument("--subgroup-max-size", type=int, default=None)
-    parser.add_argument("--subgroup-size-gamma", type=float, default=None)
-    parser.add_argument("--subgroup-size-p", type=int, default=None)
-    parser.add_argument("--subgroup-height-weight", type=float, default=None)
-    parser.add_argument("--subgroup-seed-pairs-cap", type=int, default=None)
-    parser.add_argument("--subgroup-candidate-eval-cap", type=int, default=None)
-    parser.add_argument("--subgroup-allow-singleton", action="store_true")
-    parser.add_argument("--subgroup-singleton-strategy", type=str, default=None)
-    parser.add_argument("--unassigned-height-delta-max", type=float, default=None)
-    parser.add_argument("--unassigned-include", action="store_true")
-    parser.add_argument("--tray-base-area-max", type=float, default=None)
-    parser.add_argument("--tray-weight-max", type=float, default=None)
-    parser.add_argument("--tray-op-void", type=float, default=None)
-    parser.add_argument("--max-trays", type=int, default=None)
-    parser.add_argument("--include-zero-rot", action="store_true")
+    io_group.add_argument("--sku-rot-csv", type=str, default=None)
+    io_group.add_argument("--state-json", type=str, default=None)
+    io_group.add_argument("--state-out-json", type=str, default=None)
+    io_group.add_argument("--moves-json", type=str, default=None)
+    io_group.add_argument("--apply-only", action="store_true")
+    io_group.add_argument("--cycle-days", type=float, default=None)
+    io_group.add_argument("--period-days", type=float, default=None)
+    io_group.add_argument("--include-zero-rot", action="store_true")
 
-    parser.add_argument("--opt-iterations", type=int, default=10_000)
-    parser.add_argument("--opt-time-budget-ms", type=int, default=None)
-    parser.add_argument("--opt-seed", type=int, default=0)
-    parser.add_argument("--opt-anneal", action="store_true")
-    parser.add_argument("--opt-temp-start", type=float, default=1.0)
-    parser.add_argument("--opt-temp-end", type=float, default=0.01)
-    parser.add_argument("--opt-log-every", type=int, default=500)
-    parser.add_argument("--opt-log-path", type=str, default=str(DEFAULT_OPT_LOG))
-    parser.add_argument("--opt-trace-path", type=str, default=str(DEFAULT_OPT_TRACE))
-    parser.add_argument("--opt-trays-csv", type=str, default=str(DEFAULT_OPT_TRAYS_CSV))
-    parser.add_argument("--opt-report-path", type=str, default=str(DEFAULT_OPT_REPORT))
-    parser.add_argument(
+    group_group.add_argument("--group-seed-count", type=int, default=None)
+    group_group.add_argument(
+        "--group-seed-strategy",
+        type=str,
+        choices=["stratified_60_30_10", "stratified_40_40_20", "coverage", "top_rot"],
+        default=None,
+    )
+    group_group.add_argument(
+        "--selection-cost-mode",
+        type=str,
+        choices=["none", "cycle_volume"],
+        default=None,
+    )
+    group_group.add_argument("--graph-top-k-neighbors", type=int, default=None)
+    group_group.add_argument("--graph-aff-min", type=float, default=None)
+    group_group.add_argument("--group-min-delta", type=float, default=None)
+    group_group.add_argument("--group-max-size", type=int, default=None)
+    group_group.add_argument("--group-score-wa", type=float, default=None)
+    group_group.add_argument("--group-score-wr", type=float, default=None)
+    group_group.add_argument("--group-score-wh", type=float, default=None)
+    group_group.add_argument("--group-height-ref", type=float, default=None)
+    group_group.add_argument("--group-height-p", type=float, default=None)
+
+    subgroup_group.add_argument("--subgroup-max-size", type=int, default=None)
+    subgroup_group.add_argument("--subgroup-size-gamma", type=float, default=None)
+    subgroup_group.add_argument("--subgroup-size-p", type=int, default=None)
+    subgroup_group.add_argument("--subgroup-height-weight", type=float, default=None)
+    subgroup_group.add_argument("--subgroup-seed-pairs-cap", type=int, default=None)
+    subgroup_group.add_argument("--subgroup-candidate-eval-cap", type=int, default=None)
+    subgroup_group.add_argument("--subgroup-min-delta", type=float, default=None)
+    subgroup_group.add_argument("--subgroup-marginal-tray-weight", type=float, default=None)
+    subgroup_group.add_argument("--subgroup-marginal-area-waste-weight", type=float, default=None)
+    subgroup_group.add_argument("--subgroup-allow-singleton", action="store_true")
+    subgroup_group.add_argument("--subgroup-singleton-strategy", type=str, default=None)
+
+    unassigned_group.add_argument("--unassigned-height-delta-max", type=float, default=None)
+    unassigned_group.add_argument(
+        "--unassigned-include",
+        dest="unassigned_include",
+        action="store_true",
+    )
+    unassigned_group.add_argument(
+        "--no-unassigned-include",
+        dest="unassigned_include",
+        action="store_false",
+    )
+    parser.set_defaults(unassigned_include=None)
+
+    tray_group.add_argument("--tray-base-area-max", type=float, default=None)
+    tray_group.add_argument("--tray-weight-max", type=float, default=None)
+    tray_group.add_argument("--tray-op-void", type=float, default=None)
+    tray_group.add_argument("--max-trays", type=int, default=None)
+
+    optimize_group.add_argument("--optimizer-tray-count-weight", type=float, default=None)
+    optimize_group.add_argument("--optimizer-area-waste-weight", type=float, default=None)
+    optimize_group.add_argument("--opt-iterations", type=int, default=10_000)
+    optimize_group.add_argument("--opt-time-budget-ms", type=int, default=None)
+    optimize_group.add_argument("--opt-seed", type=int, default=0)
+    optimize_group.add_argument("--opt-anneal", action="store_true")
+    optimize_group.add_argument("--opt-temp-start", type=float, default=1.0)
+    optimize_group.add_argument("--opt-temp-end", type=float, default=0.01)
+    optimize_group.add_argument("--opt-log-every", type=int, default=500)
+    optimize_group.add_argument("--opt-log-path", type=str, default=str(DEFAULT_OPT_LOG))
+    optimize_group.add_argument("--opt-trace-path", type=str, default=str(DEFAULT_OPT_TRACE))
+    optimize_group.add_argument("--opt-trays-csv", type=str, default=str(DEFAULT_OPT_TRAYS_CSV))
+    optimize_group.add_argument("--opt-report-path", type=str, default=str(DEFAULT_OPT_REPORT))
+    optimize_group.add_argument(
         "--opt-report-breakdown",
         action="store_true",
         help="Include per-tray KPI breakdown in the optimizer report.",
@@ -145,7 +182,11 @@ def main() -> int:
             metric=config.affinity_metric,
         )
         groups = build_groups(skus=skus, orders=orders, config=config)
-        selected_groups = select_groups(groups=groups, skus=skus)
+        selected_groups = select_groups(
+            groups=groups,
+            skus=skus,
+            selection_cost_mode=config.selection_cost_mode,
+        )
         tray_plans = build_tray_plans(
             selected_groups=selected_groups,
             skus=skus,
@@ -398,6 +439,12 @@ def _build_config(
         group_seed_count=default_config.group_seed_count
         if args.group_seed_count is None
         else args.group_seed_count,
+        group_seed_strategy=default_config.group_seed_strategy
+        if args.group_seed_strategy is None
+        else args.group_seed_strategy,
+        selection_cost_mode=default_config.selection_cost_mode
+        if args.selection_cost_mode is None
+        else args.selection_cost_mode,
         graph_top_k_neighbors=default_config.graph_top_k_neighbors
         if args.graph_top_k_neighbors is None
         else args.graph_top_k_neighbors,
@@ -443,6 +490,15 @@ def _build_config(
         subgroup_candidate_eval_cap=default_config.subgroup_candidate_eval_cap
         if args.subgroup_candidate_eval_cap is None
         else args.subgroup_candidate_eval_cap,
+        subgroup_min_delta=default_config.subgroup_min_delta
+        if args.subgroup_min_delta is None
+        else args.subgroup_min_delta,
+        subgroup_marginal_tray_weight=default_config.subgroup_marginal_tray_weight
+        if args.subgroup_marginal_tray_weight is None
+        else args.subgroup_marginal_tray_weight,
+        subgroup_marginal_area_waste_weight=default_config.subgroup_marginal_area_waste_weight
+        if args.subgroup_marginal_area_waste_weight is None
+        else args.subgroup_marginal_area_waste_weight,
         subgroup_allow_singleton=default_config.subgroup_allow_singleton
         if not args.subgroup_allow_singleton
         else args.subgroup_allow_singleton,
@@ -453,7 +509,7 @@ def _build_config(
         if args.unassigned_height_delta_max is None
         else args.unassigned_height_delta_max,
         unassigned_include=default_config.unassigned_include
-        if not args.unassigned_include
+        if args.unassigned_include is None
         else args.unassigned_include,
         tray_base_area_max=default_config.tray_base_area_max
         if args.tray_base_area_max is None
@@ -464,6 +520,12 @@ def _build_config(
         tray_op_void=default_config.tray_op_void
         if args.tray_op_void is None
         else args.tray_op_void,
+        optimizer_tray_count_weight=default_config.optimizer_tray_count_weight
+        if args.optimizer_tray_count_weight is None
+        else args.optimizer_tray_count_weight,
+        optimizer_area_waste_weight=default_config.optimizer_area_waste_weight
+        if args.optimizer_area_waste_weight is None
+        else args.optimizer_area_waste_weight,
         max_trays=default_config.max_trays if args.max_trays is None else args.max_trays,
     )
 

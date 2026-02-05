@@ -11,18 +11,23 @@ CostFunction = Callable[[list[str], dict[str, SKU]], float]
 def select_groups(
     groups: Iterable[AffinityGroup],
     skus: Iterable[SKU],
+    selection_cost_mode: str = "none",
     cost_fn: CostFunction | None = None,
 ) -> list[AffinityGroup]:
     """
-    Deduplicate and select non-overlapping groups by value density.
+    Deduplicate and select non-overlapping groups.
 
     - Dedup keeps the highest score (tie-breaker: rotation).
-    - Selection is greedy by value density, then score, then rotation.
+    - Selection ranks by score by default.
+    - Optional cycle-volume mode ranks by value density, then score, then rotation.
     - Result ensures each SKU appears in at most one group.
     """
     sku_list = list(skus)
     sku_by_id = {sku.sku_id: sku for sku in sku_list}
-    cost_fn = cost_fn or group_cost_cycle_volume
+    if selection_cost_mode not in {"none", "cycle_volume"}:
+        raise ValueError("selection_cost_mode must be none or cycle_volume")
+    if cost_fn is None and selection_cost_mode == "cycle_volume":
+        cost_fn = group_cost_cycle_volume
 
     deduped = _dedupe_groups(groups, sku_by_id)
     ranked = _rank_groups(deduped, sku_by_id, cost_fn)
@@ -68,17 +73,20 @@ def _dedupe_groups(
 def _rank_groups(
     groups: Iterable[AffinityGroup],
     sku_by_id: dict[str, SKU],
-    cost_fn: CostFunction,
+    cost_fn: CostFunction | None,
 ) -> list[AffinityGroup]:
     scored: list[tuple[float, float, float, AffinityGroup]] = []
     for group in groups:
-        cost = cost_fn(group.sku_ids, sku_by_id)
-        if cost <= 0:
-            density = 0.0
+        if cost_fn is None:
+            primary = group.score
         else:
-            density = group.score / cost
+            cost = cost_fn(group.sku_ids, sku_by_id)
+            if cost <= 0:
+                primary = 0.0
+            else:
+                primary = group.score / cost
         rotation = sum(sku_by_id[sku_id].rot for sku_id in group.sku_ids)
-        scored.append((density, group.score, rotation, group))
+        scored.append((primary, group.score, rotation, group))
 
     scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     return [item[3] for item in scored]

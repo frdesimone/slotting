@@ -78,5 +78,4 @@ def build_tray_plans(
 
     return plans
 
-
 __all__ = ["build_tray_plans", "trays_to_csv_rows"]

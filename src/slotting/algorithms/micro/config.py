@@ -6,9 +6,9 @@ from slotting.algorithms.micro.strategies import (
     AffinityMetric,
     AffinityScorer,
     CandidateSelector,
+    FullAffinityScorer,
     JaccardMetric,
     OneHopCandidateSelector,
-    StarAffinityScorer,
 )
 
 
@@ -16,35 +16,42 @@ from slotting.algorithms.micro.strategies import (
 class MicroSlottingConfig:
     cycle_days: float = 7.0
     graph_top_k_neighbors: int = 50
-    graph_aff_min: float = 0.08
+    graph_aff_min: float = 0.03
     affinity_metric: AffinityMetric = field(default_factory=JaccardMetric)
-    affinity_scorer: AffinityScorer = field(default_factory=StarAffinityScorer)
+    affinity_scorer: AffinityScorer = field(default_factory=FullAffinityScorer)
     candidate_selector: CandidateSelector = field(
         default_factory=OneHopCandidateSelector
     )
     group_seed_count: int = 500
+    group_seed_strategy: str = "stratified_40_40_20"
+    selection_cost_mode: str = "none"
     group_min_delta: float = 0.0
-    group_max_size: int = 16
+    group_max_size: int = 24
     group_score_wa: float = 0.75
     group_score_wr: float = 0.1
-    group_score_wh: float = 0.15
+    group_score_wh: float = 0.1
     group_height_ref: float = 25.0
     group_height_p: float = 2.0
-    subgroup_max_size: int = 10
-    subgroup_size_gamma: float = 0.2
+    subgroup_max_size: int = 14
+    subgroup_size_gamma: float = 0.03
     subgroup_size_p: int = 2
-    subgroup_height_weight: float = 0.5
+    subgroup_height_weight: float = 0.25
     subgroup_height_dispersion_mode: str = "range"
     subgroup_seed_pairs_cap: int = 20
     subgroup_candidate_eval_cap: int = 10
     subgroup_allow_singleton: bool = False
     subgroup_singleton_strategy: str = "min_loss"
+    subgroup_min_delta: float = 0.0
+    subgroup_marginal_tray_weight: float = 1.0
+    subgroup_marginal_area_waste_weight: float = 200.0
     unassigned_height_delta_max: float = 30.0
     unassigned_include: bool = True
     tray_base_area_max: float = 3513700.0
     tray_weight_max: float = 750.0
     tray_op_void: float = 0.10
     max_trays: int = 256
+    optimizer_tray_count_weight: float = 0.2
+    optimizer_area_waste_weight: float = 200.0
 
     def __post_init__(self) -> None:
         self._validate_strategy_inputs()
@@ -71,6 +78,17 @@ class MicroSlottingConfig:
             raise ValueError("graph_aff_min must be between 0 and 1")
         if self.group_seed_count <= 0:
             raise ValueError("group_seed_count must be > 0")
+        if self.group_seed_strategy not in {
+            "stratified_60_30_10",
+            "stratified_40_40_20",
+            "coverage",
+            "top_rot",
+        }:
+            raise ValueError(
+                "group_seed_strategy must be stratified_60_30_10, stratified_40_40_20, coverage or top_rot"
+            )
+        if self.selection_cost_mode not in {"none", "cycle_volume"}:
+            raise ValueError("selection_cost_mode must be none or cycle_volume")
         if self.group_max_size <= 0:
             raise ValueError("group_max_size must be > 0")
         if self.group_min_delta < 0:
@@ -101,6 +119,12 @@ class MicroSlottingConfig:
             raise ValueError(
                 "subgroup_singleton_strategy must be min_loss or allow_singleton"
             )
+        if self.subgroup_min_delta < 0:
+            raise ValueError("subgroup_min_delta must be >= 0")
+        if self.subgroup_marginal_tray_weight < 0:
+            raise ValueError("subgroup_marginal_tray_weight must be >= 0")
+        if self.subgroup_marginal_area_waste_weight < 0:
+            raise ValueError("subgroup_marginal_area_waste_weight must be >= 0")
         if self.unassigned_height_delta_max < 0:
             raise ValueError("unassigned_height_delta_max must be >= 0")
 
@@ -113,3 +137,7 @@ class MicroSlottingConfig:
             raise ValueError("tray_op_void must be between 0 and 1")
         if self.max_trays <= 0:
             raise ValueError("max_trays must be > 0")
+        if self.optimizer_tray_count_weight < 0:
+            raise ValueError("optimizer_tray_count_weight must be >= 0")
+        if self.optimizer_area_waste_weight < 0:
+            raise ValueError("optimizer_area_waste_weight must be >= 0")

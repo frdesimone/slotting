@@ -17,7 +17,13 @@ def test_micro_slotting_config_validates_inputs() -> None:
     with pytest.raises(ValueError):
         MicroSlottingConfig(group_max_size=0)
     with pytest.raises(ValueError):
+        MicroSlottingConfig(group_seed_strategy="unknown")
+    with pytest.raises(ValueError):
+        MicroSlottingConfig(selection_cost_mode="unknown")
+    with pytest.raises(ValueError):
         MicroSlottingConfig(subgroup_max_size=1)
+    with pytest.raises(ValueError):
+        MicroSlottingConfig(subgroup_min_delta=-0.1)
     with pytest.raises(ValueError):
         MicroSlottingConfig(subgroup_height_dispersion_mode="std")
     with pytest.raises(ValueError):

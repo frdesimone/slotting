@@ -35,6 +35,9 @@ La API principal para optimización es:
 El estado híbrido:
 - Recalcula KPI lógico incremental.
 - Valida físicamente solo subgrupos afectados por un move.
+- KPI global incluye penalización física configurable:
+  - `optimizer_tray_count_weight * tray_count`
+  - `optimizer_area_waste_weight * area_waste_ratio`
 
 ### Optimización local
 

@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
+import sys
+import os
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 from slotting.algorithms.micro import (
     MicroSlottingConfig,
@@ -17,6 +20,9 @@ from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state, dump_aff
 from slotting.algorithms.micro.optimization import LocalSearchConfig, OptimizationResult, optimize
 from slotting.algorithms.micro.reporting import build_run_report
 from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
+from slotting.visualization import print_step_header, print_kpi_summary, print_micro_tray
+from rich.console import Console # Para mensajes intermedios si quieres
+console = Console()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAYS_CSV = REPO_ROOT / "outputs" / "trays.csv"
@@ -143,8 +149,11 @@ def main() -> int:
         include_zero_rot=args.include_zero_rot,
     )
 
+    print_kpi_summary(skus, orders, stats)
+
     config = _build_config(args, default_config, cycle_days)
 
+    print_step_header("Construyendo Grafo y Grupos")
     affinity_graph = build_affinity_graph(
         orders=orders,
         top_k=config.graph_top_k_neighbors,
@@ -159,6 +168,7 @@ def main() -> int:
         skus=skus,
         selection_cost_mode=config.selection_cost_mode,
     )
+    print_step_header("Generando Bandejas (Estrategia Greedy)")
     tray_plans = build_tray_plans(
         selected_groups=selected_groups,
         skus=skus,
@@ -186,6 +196,18 @@ def main() -> int:
         writer = csv.writer(handle)
         writer.writerows(rows)
     print(f"- Tray CSV written: {csv_path}")
+
+    if all_trays: # all_trays contiene las bandejas (optimizadas o no según el flujo)
+        # Recalcular ocupación si vino del optimizador (a veces el objeto tray no se actualiza en vivo, pero asumimos que sí)
+        # Ojo: si usaste hybrid.all_trays(), usa esa lista.
+        
+            trays_to_show = hybrid.all_trays() if args.optimize else all_trays
+            if trays_to_show:
+                print_step_header("Muestra de Resultado: Bandeja de Alta Densidad")
+                best_tray = max(trays_to_show, key=lambda t: t.occupancy_percent if hasattr(t, 'occupancy_percent') else 0)
+                
+                from slotting.visualization import print_micro_results_final
+                print_micro_results_final(trays_to_show, len(skus))
 
     if args.optimize:
         subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
@@ -226,6 +248,16 @@ def main() -> int:
             writer = csv.writer(handle)
             writer.writerows(opt_rows)
         print(f"- Optimized tray CSV written: {opt_csv_path}")
+
+        if all_trays: # all_trays contiene las bandejas (optimizadas o no según el flujo)
+        # Recalcular ocupación si vino del optimizador (a veces el objeto tray no se actualiza en vivo, pero asumimos que sí)
+        # Ojo: si usaste hybrid.all_trays(), usa esa lista.
+        
+            trays_to_show = hybrid.all_trays() if args.optimize else all_trays
+            if trays_to_show:
+                
+                from slotting.visualization import print_micro_results_final
+                print_micro_results_final(trays_to_show, len(skus))
 
     return 0
 

@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from collections import Counter
 
-from slotting.algorithms.common.prep.loader import load_slotting_inputs
+from slotting.algorithms.common.prep import load_slotting_inputs, load_slotting_inputs_with_stats
 from slotting.algorithms.macro import MacroSlottingConfig, run_macro_slotting
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +35,7 @@ def main() -> int:
     
     print(f"--- Cargando datos (Cobertura: {args.cycle_days} días) ---")
 
-    skus, _, stats = load_slotting_inputs(
+    skus, _, stats = load_slotting_inputs_with_stats(
         codes_csv_path=args.codes_csv,
         orders_csv_path=args.orders_csv,
         cycle_days=args.cycle_days,

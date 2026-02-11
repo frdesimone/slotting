@@ -4,11 +4,11 @@ import argparse
 import csv
 from pathlib import Path
 
+
 from slotting.algorithms.micro import (
     MicroSlottingConfig,
     build_affinity_graph,
     build_groups,
-    load_slotting_inputs_with_stats,
     select_groups,
     build_tray_plans,
     trays_to_csv_rows,
@@ -16,6 +16,7 @@ from slotting.algorithms.micro import (
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state, dump_affinity_graph_json
 from slotting.algorithms.micro.optimization import LocalSearchConfig, OptimizationResult, optimize
 from slotting.algorithms.micro.reporting import build_run_report
+from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAYS_CSV = REPO_ROOT / "outputs" / "trays.csv"

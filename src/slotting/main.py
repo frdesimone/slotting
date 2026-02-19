@@ -21,7 +21,7 @@ from slotting.algorithms.micro.affinity_graph import build_affinity_graph
 from slotting.algorithms.micro.grouping import build_groups
 from slotting.algorithms.micro.selection import select_groups
 from slotting.algorithms.micro.step7 import build_tray_plans
-from slotting.algorithms.micro.kpi_state.hybrid import build_hybrid_kpi_state
+from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
 
 logger = logging.getLogger("slotting")

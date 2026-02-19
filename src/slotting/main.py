@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi import File, UploadFile
 import pandas as pd
 import io
+import ipaddress
 
 from .config import get_settings
 from .logging_config import configure_logging
@@ -14,24 +15,35 @@ logger = logging.getLogger("slotting")
 app = FastAPI(title="Slotting API", description="API para el algoritmo de macro y micro slotting")
 
 # 2. Configurar las IPs permitidas (AQUÍ PONES LAS IPS DESDE DONDE VAS A LLAMAR A LA API)
-ALLOWED_IPS = {"35.90.103.132/30", "44.208.168.68/30"}  # Reemplaza con tus IPs reales
+ALLOWED_CIDRS = [
+    ipaddress.ip_network("35.90.103.132/30"),
+    ipaddress.ip_network("44.208.168.68/30")
+]
 
 # 3. Middleware para restringir accesos
 @app.middleware("http")
 async def restrict_ips(request: Request, call_next):
-    # En DigitalOcean App Platform, la IP del cliente viene en este header
     forwarded_for = request.headers.get("X-Forwarded-For")
     
     if forwarded_for:
-        # Tomamos la primera IP en caso de que haya varios proxies
         client_ip = forwarded_for.split(",")[0].strip()
     else:
-        # Fallback para entorno local
         client_ip = request.client.host
 
-    if client_ip not in ALLOWED_IPS:
-        logger.warning(f"Acceso denegado a la IP: {client_ip}")
-        return JSONResponse(status_code=403, content={"detail": "Access denied. IP not authorized."})
+    try:
+        # Convertimos la IP de texto a un objeto IPv4 o IPv6
+        ip_obj = ipaddress.ip_address(client_ip)
+        
+        # Verificamos si la IP pertenece a alguno de los bloques CIDR
+        is_allowed = any(ip_obj in network for network in ALLOWED_CIDRS)
+        
+        if not is_allowed:
+            logger.warning(f"Acceso denegado a la IP: {client_ip}")
+            return JSONResponse(status_code=403, content={"detail": f"Access denied. IP {client_ip} not authorized."})
+            
+    except ValueError:
+        # Por si llega un string que no es una IP válida
+        return JSONResponse(status_code=400, content={"detail": "Invalid IP address format."})
     
     response = await call_next(request)
     return response

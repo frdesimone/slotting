@@ -1,6 +1,9 @@
 ﻿import logging
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi import File, UploadFile
+import pandas as pd
+import io
 
 from .config import get_settings
 from .logging_config import configure_logging
@@ -11,7 +14,7 @@ logger = logging.getLogger("slotting")
 app = FastAPI(title="Slotting API", description="API para el algoritmo de macro y micro slotting")
 
 # 2. Configurar las IPs permitidas (AQUÍ PONES LAS IPS DESDE DONDE VAS A LLAMAR A LA API)
-ALLOWED_IPS = {"127.0.0.1", "192.168.1.100"}  # Reemplaza con tus IPs reales
+ALLOWED_IPS = {"35.90.103.132/30", "44.208.168.68/30"}  # Reemplaza con tus IPs reales
 
 # 3. Middleware para restringir accesos
 @app.middleware("http")
@@ -39,6 +42,30 @@ def startup_event():
     settings = get_settings()
     configure_logging(settings.log_level)
     logger.info("Arrancando API de slotting (env=%s)", settings.env)
+
+
+@app.post("/upload-pedidos/")
+async def procesar_pedidos(file: UploadFile = File(...)):
+    # 1. Leemos los bytes del archivo que envió Retool
+    contents = await file.read()
+    
+    # 2. Le pasamos esos bytes directamente a Pandas ¡sin guardar en disco!
+    if file.filename.endswith('.csv'):
+        df = pd.read_csv(io.BytesIO(contents))
+    elif file.filename.endswith('.xlsx'):
+        df = pd.read_excel(io.BytesIO(contents))
+    else:
+        return {"error": "Formato no soportado"}
+    
+    # Aquí corres tu lógica de macro/micro slotting...
+    total_filas = len(df)
+    
+    # 3. Devuelves el resultado
+    return {
+        "mensaje": f"Archivo {file.filename} procesado con éxito",
+        "filas_leidas": total_filas,
+        "status": "ok"
+    }
 
 # 5. Endpoint de prueba / Healthcheck
 @app.get("/")

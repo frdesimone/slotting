@@ -13,6 +13,21 @@ from collections import Counter
 
 console = Console()
 
+def _get_occupancy(tray) -> float:
+    """Calcula el porcentaje de ocupación de forma segura."""
+    # Si ya tiene la propiedad calculada (versiones futuras/optimizadas)
+    if hasattr(tray, 'occupancy_percent'):
+        return tray.occupancy_percent
+    
+    # Cálculo manual basado en el modelo estándar Tray
+    # Usamos getattr por seguridad
+    max_area = getattr(tray, 'max_area', 0.0)
+    area_used = getattr(tray, 'area_used', 0.0)
+    
+    if max_area > 0:
+        return (area_used / max_area) * 100.0
+    return 0.0
+
 def print_step_header(title: str):
     console.print(f"\n[bold cyan]--- {title} ---[/bold cyan]")
 
@@ -51,6 +66,59 @@ def print_kpi_summary(skus, orders, stats):
     grid.add_row(t1, t2)
     console.print(Panel(grid, title="[bold]Reporte de Inicialización[/bold]", expand=False))
 
+def print_outlier_report(report, total_skus, total_orders):
+    """Muestra alertas sobre datos anómalos detectados antes de procesar."""
+    
+    # Si no hay outliers graves, no imprimimos nada para no ensuciar
+    if not (report.heavy_skus or report.massive_orders or report.ubiquitous_skus):
+        return
+
+    console.print("\n[bold red]⚠️  ANÁLISIS DE OUTLIERS DETECTÓ ANOMALÍAS[/bold red]")
+    
+    grid = Table.grid(expand=True)
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+    
+    # Panel Izquierdo: Problemas Físicos
+    t_fisica = Table(show_header=True, header_style="bold yellow", box=None)
+    t_fisica.add_column("Tipo de Anomalía")
+    t_fisica.add_column("Cantidad", justify="right")
+    t_fisica.add_column("Impacto", style="dim")
+    
+    n_heavy = len(report.heavy_skus)
+    if n_heavy > 0:
+        t_fisica.add_row("SKUs muy pesados (>25kg)", f"[red]{n_heavy}[/red]", "Riesgo ergonomía/Bandeja")
+        
+    n_bulky = len(report.bulky_skus)
+    if n_bulky > 0:
+        t_fisica.add_row("SKUs muy voluminosos", f"[yellow]{n_bulky}[/yellow]", "Saturación rápida VLM")
+        
+    n_zeros = len(report.zero_metric_skus)
+    if n_zeros > 0:
+        t_fisica.add_row("SKUs con Vol/Peso = 0", f"[red]{n_zeros}[/red]", "Cálculo de llenado irreal")
+
+    # Panel Derecho: Problemas de Afinidad / Pedidos
+    t_logica = Table(show_header=True, header_style="bold magenta", box=None)
+    t_logica.add_column("Tipo de Anomalía")
+    t_logica.add_column("Cantidad", justify="right")
+    
+    n_massive = len(report.massive_orders)
+    if n_massive > 0:
+        t_logica.add_row(f"Pedidos B2B (>50 líneas)", f"[red]{n_massive}[/red] pedidos")
+        
+    n_ubiq = len(report.ubiquitous_skus)
+    if n_ubiq > 0:
+        t_logica.add_row("SKUs 'Comodín' (En >15% pedidos)", f"[red]{n_ubiq}[/red] SKUs")
+
+    grid.add_row(Panel(t_fisica, title="Anomalías Maestras"), Panel(t_logica, title="Anomalías Transaccionales"))
+    console.print(grid)
+
+    # Detalle de los Omnipresentes (Muy útil para la demo)
+    if report.ubiquitous_skus:
+        console.print("[yellow]💡 Sugerencia: Revise estos SKUs. Podrían ser cajas, bolsas de envío o errores, y arruinarán el clustering:[/yellow]")
+        for sku_id, count, pct in report.ubiquitous_skus[:5]: # Mostrar top 5
+            console.print(f"   - SKU: [bold]{sku_id}[/bold] (Aparece en {count} pedidos, [cyan]{pct:.1%}[/cyan] del total)")
+
 def print_macro_results(results, vlm_total_vol, vlm_occupancy_target):
     """Visualización de resultados Macro (Allocator)."""
     counts = Counter(r.storage_type for r in results)
@@ -78,9 +146,10 @@ def print_macro_results(results, vlm_total_vol, vlm_occupancy_target):
     
     color = "green" if 80 <= fill_pct <= 100 else "yellow" if fill_pct < 80 else "red"
     
-    # Barra de progreso manual
     bar_width = 30
     filled = int((fill_pct / 100) * bar_width)
+    # Clamp para evitar overflow visual
+    filled = min(filled, bar_width)
     bar = "█" * filled + "░" * (bar_width - filled)
 
     summary_text = Text()
@@ -93,7 +162,6 @@ def print_macro_results(results, vlm_total_vol, vlm_occupancy_target):
 def print_micro_results_final(all_trays, skus_total_count):
     """
     Panel final de resultados Micro-Slotting.
-    Muestra KPIs de eficiencia y uso de bandejas.
     """
     if not all_trays:
         console.print("[red]No se generaron bandejas.[/red]")
@@ -101,13 +169,13 @@ def print_micro_results_final(all_trays, skus_total_count):
 
     total_trays = len(all_trays)
     
-    # Calcular promedios
-    avg_occupancy = sum(t.occupancy_percent for t in all_trays) / total_trays
-    # Asumimos que tray tiene .weight_kg o calculamos sumando items
-    total_weight_used = sum(sum(i.weight for i in t.items) for t in all_trays)
-    # Capacidad teórica (hardcoded o del config, asumimos 750kg por bandeja std o leemos del objeto si tiene)
-    # Para visualización rápida usamos un estimado si no está en el objeto tray
-    tray_capacity_kg = getattr(all_trays[0], 'max_weight', 250.0) # Default 250kg
+    # Calcular promedios usando la función helper
+    avg_occupancy = sum(_get_occupancy(t) for t in all_trays) / total_trays
+    
+    # Cálculo de peso
+    total_weight_used = sum(getattr(t, 'weight_used', 0) for t in all_trays)
+    # Capacidad teórica estimada (250kg default)
+    tray_capacity_kg = getattr(all_trays[0], 'max_weight', 250.0) 
     total_capacity_kg = total_trays * tray_capacity_kg
     weight_pct = (total_weight_used / total_capacity_kg) * 100 if total_capacity_kg > 0 else 0
 
@@ -120,25 +188,24 @@ def print_micro_results_final(all_trays, skus_total_count):
     t_stats = Table(show_header=False, box=None)
     t_stats.add_row("[bold cyan]Total Bandejas Generadas:[/bold cyan]", f"[bold white]{total_trays}[/bold white]")
     t_stats.add_row("[bold cyan]SKUs Ubicados:[/bold cyan]", f"[bold white]{skus_total_count}[/bold white]")
-    t_stats.add_row("[bold cyan]Ocupación Promedio (Vol):[/bold cyan]", f"[bold yellow]{avg_occupancy:.1f}%[/bold yellow]")
+    t_stats.add_row("[bold cyan]Ocupación Promedio (Area):[/bold cyan]", f"[bold yellow]{avg_occupancy:.1f}%[/bold yellow]")
     
     # Panel Derecho: Barras de Eficiencia
     t_bars = Table(show_header=False, box=None)
     
-    # Barra Volumen
     vol_color = "green" if avg_occupancy > 70 else "yellow"
-    t_bars.add_row("Espacio", _make_bar(avg_occupancy, color=vol_color))
+    t_bars.add_row("Espacio (Area)", _make_bar(avg_occupancy, color=vol_color))
     
-    # Barra Peso
-    weight_color = "green" if weight_pct > 50 else "blue" # Peso suele ser bajo en VLM
-    t_bars.add_row("Peso", _make_bar(weight_pct, color=weight_color))
+    weight_color = "green" if weight_pct > 50 else "blue" 
+    t_bars.add_row("Peso (Kg)", _make_bar(weight_pct, color=weight_color))
 
     grid.add_row(Panel(t_stats, title="Resumen Operativo"), Panel(t_bars, title="Eficiencia de Recursos"))
     
     console.print(Panel(grid, title="[bold]🏁 Resultados Finales Micro-Slotting[/bold]", border_style="green"))
 
     # Mostrar la "Mejor Bandeja"
-    best_tray = max(all_trays, key=lambda t: t.occupancy_percent)
+    # Usamos _get_occupancy como key para encontrar la mejor
+    best_tray = max(all_trays, key=lambda t: _get_occupancy(t))
     print_micro_tray(best_tray, best_tray.items, detailed=True)
 
 def _make_bar(pct, width=20, color="green"):
@@ -150,38 +217,40 @@ def _make_bar(pct, width=20, color="green"):
 
 def print_micro_tray(tray, items, detailed=False):
     """Visualiza una bandeja individual con detalle."""
-    occ = tray.occupancy_percent if hasattr(tray, 'occupancy_percent') else 0.0
+    occ = _get_occupancy(tray)
     color = "green" if occ > 80 else "yellow" if occ > 50 else "red"
     
+    tray_id = getattr(tray, 'tray_id', 'N/A')
+    
     # Header de la bandeja
-    console.print(f"\n[bold]📦 Detalle de Bandeja (ID: {getattr(tray, 'id', 'N/A')})[/bold]")
-    console.print(f"   Ocupación Volumétrica: [{color}]{occ:.1f}%[/{color}]")
+    console.print(f"\n[bold]📦 Detalle de Bandeja (ID: {tray_id})[/bold]")
+    console.print(f"   Ocupación Superficie: [{color}]{occ:.1f}%[/{color}]")
     console.print(f"   Items contenidos: {len(items)}")
     
     # Tabla de Items
     t = Table(show_header=True, header_style="bold magenta", expand=True, border_style="dim")
     t.add_column("SKU ID", width=15, style="cyan")
+    # Intentamos mostrar datos disponibles en el objeto item
     t.add_column("Volumen (m3)", justify="right")
     t.add_column("Peso (kg)", justify="right")
-    t.add_column("Afinidad (Grp)", justify="center")
     
-    # Mostrar top items
+    # Ordenar por volumen (si existe) o peso
+    # TrayItem suele tener 'total_volume' o 'unit_volume'
+    sorted_items = sorted(items, key=lambda x: getattr(x, 'total_volume', 0), reverse=True)
+    
     limit = 10 if detailed else 5
-    # Ordenar por volumen para mostrar los "grandes" primero
-    sorted_items = sorted(items, key=lambda x: x.volume, reverse=True)
-    
     for item in sorted_items[:limit]:
-        grp = getattr(item, 'group_id', '-')
-        w = getattr(item, 'weight', 0.0)
+        vol = getattr(item, 'total_volume', getattr(item, 'unit_volume', 0.0))
+        w = getattr(item, 'total_weight', getattr(item, 'unit_weight', 0.0))
+        
         t.add_row(
             str(item.sku_id), 
-            f"{item.volume:.5f}", 
-            f"{w:.2f}",
-            str(grp)
+            f"{vol:.5f}", 
+            f"{w:.2f}"
         )
     
     if len(items) > limit:
-        t.add_row(f"... y {len(items)-limit} más", "-", "-", "-")
+        t.add_row(f"... y {len(items)-limit} más", "-", "-")
 
     console.print(t)
     console.print(f"[dim]Nota: Mostrando los items de mayor volumen primero.[/dim]\n")

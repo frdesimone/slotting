@@ -87,6 +87,7 @@ def guardar_temp(upload_file: UploadFile) -> Path:
 def read_root():
     return {"status": "ok", "message": "API de Slotting operativa."}
 
+
 @app.post("/api/v1/outliers")
 async def detectar_outliers_endpoint(
     pedidos_file: UploadFile = File(...),

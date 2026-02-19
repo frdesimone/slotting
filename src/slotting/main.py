@@ -1,26 +1,52 @@
-﻿import logging
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi import File, UploadFile
-import pandas as pd
-import io
+﻿import os
+import shutil
 import ipaddress
+import logging
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .config import get_settings
 from .logging_config import configure_logging
+# IMPORTANTE: Aquí importarás tus funciones reales de slotting cuando las conectemos
+# from .algorithms.common.prep.orders import load_orders_from_pedidos
+# from .algorithms.macro... import ejecutar_macro_slotting
+# from .algorithms.micro... import ejecutar_micro_slotting
 
 logger = logging.getLogger("slotting")
 
-# 1. Inicializar la app de FastAPI
-app = FastAPI(title="Slotting API", description="API para el algoritmo de macro y micro slotting")
+# ==========================================
+# 1. CONFIGURACIÓN DE APP Y SEGURIDAD
+# ==========================================
+app = FastAPI(title="Slotting API", description="API para algoritmos de Macro y Micro Slotting")
 
-# 2. Configurar las IPs permitidas (AQUÍ PONES LAS IPS DESDE DONDE VAS A LLAMAR A LA API)
+# Levantamos el token de las variables de entorno (con un fallback para desarrollo local)
+API_TOKEN = os.environ.get("API_TOKEN", "token_desarrollo_local_123")
+security = HTTPBearer()
+
+def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Valida que el Bearer Token recibido coincida con la variable de entorno."""
+    if credentials.credentials != API_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+
+# ==========================================
+# 2. FIREWALL POR CÓDIGO (RESTRICCIÓN DE IPs)
+# ==========================================
 ALLOWED_CIDRS = [
-    ipaddress.ip_network("35.90.103.132/30"),
-    ipaddress.ip_network("44.208.168.68/30")
+    ipaddress.ip_network("35.90.103.132/30"),  # Retool
+    ipaddress.ip_network("44.208.168.68/30"),  # Retool
+    ipaddress.ip_network("127.0.0.0/8")        # Localhost (para pruebas)
 ]
 
-# 3. Middleware para restringir accesos
 @app.middleware("http")
 async def restrict_ips(request: Request, call_next):
     forwarded_for = request.headers.get("X-Forwarded-For")
@@ -31,60 +57,99 @@ async def restrict_ips(request: Request, call_next):
         client_ip = request.client.host
 
     try:
-        # Convertimos la IP de texto a un objeto IPv4 o IPv6
         ip_obj = ipaddress.ip_address(client_ip)
-        
-        # Verificamos si la IP pertenece a alguno de los bloques CIDR
         is_allowed = any(ip_obj in network for network in ALLOWED_CIDRS)
         
         if not is_allowed:
             logger.warning(f"Acceso denegado a la IP: {client_ip}")
-            return JSONResponse(status_code=403, content={"detail": f"Access denied. IP {client_ip} not authorized."})
-            
+            return JSONResponse(
+                status_code=403, 
+                content={"detail": f"Access denied. IP {client_ip} not authorized."}
+            )
     except ValueError:
-        # Por si llega un string que no es una IP válida
-        return JSONResponse(status_code=400, content={"detail": "Invalid IP address format."})
+        return JSONResponse(status_code=400, content={"detail": "Invalid IP format."})
     
-    response = await call_next(request)
-    return response
-
-# 4. Evento de inicio (reemplaza tu función main() anterior)
-@app.on_event("startup")
-def startup_event():
-    settings = get_settings()
-    configure_logging(settings.log_level)
-    logger.info("Arrancando API de slotting (env=%s)", settings.env)
+    return await call_next(request)
 
 
-@app.post("/upload-pedidos/")
-async def procesar_pedidos(file: UploadFile = File(...)):
-    # 1. Leemos los bytes del archivo que envió Retool
-    contents = await file.read()
-    
-    # 2. Le pasamos esos bytes directamente a Pandas ¡sin guardar en disco!
-    if file.filename.endswith('.csv'):
-        df = pd.read_csv(io.BytesIO(contents))
-    elif file.filename.endswith('.xlsx'):
-        df = pd.read_excel(io.BytesIO(contents))
-    else:
-        return {"error": "Formato no soportado"}
-    
-    # Aquí corres tu lógica de macro/micro slotting...
-    total_filas = len(df)
-    
-    # 3. Devuelves el resultado
-    return {
-        "mensaje": f"Archivo {file.filename} procesado con éxito",
-        "filas_leidas": total_filas,
-        "status": "ok"
-    }
+# ==========================================
+# 3. UTILIDADES
+# ==========================================
+def guardar_temp(upload_file: UploadFile) -> Path:
+    """Guarda un UploadFile en el disco efímero de App Platform y retorna su Path."""
+    temp_path = Path(f"/tmp/{upload_file.filename}")
+    with open(temp_path, "wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
+    return temp_path
 
-# 5. Endpoint de prueba / Healthcheck
+
+# ==========================================
+# 4. ENDPOINTS
+# ==========================================
+
 @app.get("/")
 def read_root():
-    return {"status": "ok", "message": "API de Slotting funcionando y protegida."}
+    return {"status": "ok", "message": "API de Slotting operativa."}
 
-# (Opcional) Si quieres correrlo localmente ejecutando `python -m slotting.main`
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("slotting.main:app", host="0.0.0.0", port=8080, reload=True)
+@app.post("/api/v1/outliers")
+async def detectar_outliers(
+    pedidos_file: UploadFile = File(...),
+    token: str = Depends(verificar_token)
+):
+    if not pedidos_file.filename.endswith(('.csv', '.xlsx')):
+        raise HTTPException(status_code=400, detail="El archivo debe ser CSV o Excel")
+
+    temp_path = guardar_temp(pedidos_file)
+    try:
+        # Aquí llamas a tu función:
+        # orders, rot, units, stats = load_orders_from_pedidos(path=temp_path)
+        
+        return {
+            "endpoint": "outliers",
+            "mensaje": f"Archivo {pedidos_file.filename} analizado",
+            "resultados": "Lógica de outliers pendiente de conectar..."
+        }
+    finally:
+        if temp_path.exists(): temp_path.unlink()
+
+
+@app.post("/api/v1/macro")
+async def ejecutar_macro(
+    pedidos_file: UploadFile = File(...),
+    maestro_file: UploadFile = File(...), # Suponiendo que macro necesita el catálogo
+    token: str = Depends(verificar_token)
+):
+    path_pedidos = guardar_temp(pedidos_file)
+    path_maestro = guardar_temp(maestro_file)
+    
+    try:
+        # Aquí irá la lógica del Paso 1 al Paso 4 de tu doc de Macro-slotting
+        return {
+            "endpoint": "macro-slotting",
+            "mensaje": "Archivos recibidos correctamente",
+            "archivos_procesados": [pedidos_file.filename, maestro_file.filename]
+        }
+    finally:
+        if path_pedidos.exists(): path_pedidos.unlink()
+        if path_maestro.exists(): path_maestro.unlink()
+
+
+@app.post("/api/v1/micro")
+async def ejecutar_micro(
+    pedidos_file: UploadFile = File(...),
+    maestro_file: UploadFile = File(...),
+    token: str = Depends(verificar_token)
+):
+    path_pedidos = guardar_temp(pedidos_file)
+    path_maestro = guardar_temp(maestro_file)
+    
+    try:
+        # Aquí irá la lógica de grupos, subgrupos y asignación a bandejas
+        return {
+            "endpoint": "micro-slotting",
+            "mensaje": "Archivos recibidos correctamente",
+            "archivos_procesados": [pedidos_file.filename, maestro_file.filename]
+        }
+    finally:
+        if path_pedidos.exists(): path_pedidos.unlink()
+        if path_maestro.exists(): path_maestro.unlink()

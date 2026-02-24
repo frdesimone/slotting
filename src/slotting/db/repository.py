@@ -1,9 +1,21 @@
 from sqlalchemy.orm import Session
-from .models import Execution, MacroResult, MicroResult
+from .models import Execution, MacroResult, MicroResult, User
 
-def save_macro_execution(db: Session, params: dict, kpi: dict, skus_details: list):
-    # 1. Crear la ejecución padre
-    db_exec = Execution(job_type="MACRO", parameters=params)
+# Función helper para el mock de usuarios (hasta que instales Clerk)
+def get_or_create_user(db: Session, user_id: str, email: str = "mock@slotting.com"):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        user = User(id=user_id, email=email)
+        db.add(user)
+        db.commit()
+    return user
+
+def save_macro_execution(db: Session, user_id: str, params: dict, kpi: dict, skus_details: list):
+    # Aseguramos que el usuario exista
+    get_or_create_user(db, user_id)
+
+    # 1. Crear la ejecución padre atada al user_id
+    db_exec = Execution(user_id=user_id, job_type="MACRO", parameters=params)
     db.add(db_exec)
     db.flush() # Para obtener el ID generado sin commitear aún
 
@@ -21,8 +33,11 @@ def save_macro_execution(db: Session, params: dict, kpi: dict, skus_details: lis
     db.refresh(db_exec)
     return db_exec.id
 
-def save_micro_execution(db: Session, params: dict, kpi: dict, trays_export: list):
-    db_exec = Execution(job_type="MICRO", parameters=params)
+def save_micro_execution(db: Session, user_id: str, params: dict, kpi: dict, trays_export: list):
+    # Aseguramos que el usuario exista
+    get_or_create_user(db, user_id)
+
+    db_exec = Execution(user_id=user_id, job_type="MICRO", parameters=params)
     db.add(db_exec)
     db.flush()
 
@@ -36,3 +51,8 @@ def save_micro_execution(db: Session, params: dict, kpi: dict, trays_export: lis
     db.add(db_micro)
     db.commit()
     return db_exec.id
+
+# --- LA CLAVE DEL MULTI-TENANT ---
+def get_user_executions(db: Session, user_id: str):
+    """Retorna TODAS las ejecuciones filtradas estrictamente por el usuario."""
+    return db.query(Execution).filter(Execution.user_id == user_id).all()

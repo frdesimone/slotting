@@ -22,6 +22,8 @@ from slotting.algorithms.micro.reporting import build_run_report
 from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
 from slotting.visualization import print_step_header, print_kpi_summary, print_micro_tray
 from rich.console import Console # Para mensajes intermedios si quieres
+from slotting.db.database import SessionLocal, Base, engine
+from slotting.db.repository import save_micro_execution
 console = Console()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -258,6 +260,52 @@ def main() -> int:
                 
                 from slotting.visualization import print_micro_results_final
                 print_micro_results_final(trays_to_show, len(skus))
+
+    # === GUARDADO EN BASE DE DATOS ===
+    print_step_header("Guardando en Base de Datos PostgreSQL")
+    # Aseguramos que existan las tablas
+    Base.metadata.create_all(bind=engine) 
+
+    # Determinamos cuáles son las bandejas finales
+    final_db_trays = hybrid.all_trays() if args.optimize else all_trays
+    
+    # Helper para ocupación
+    def get_occ(t):
+        return t.occupancy_percent if hasattr(t, 'occupancy_percent') else (getattr(t, 'area_used', 0)/getattr(t, 'max_area', 1))*100
+
+    total_trays = len(final_db_trays)
+    avg_occupancy = sum(get_occ(t) for t in final_db_trays) / total_trays if total_trays else 0
+
+    db_kpi = {
+        "total_trays": total_trays,
+        "avg_area_occupancy_pct": round(avg_occupancy, 2),
+        "optimized": args.optimize
+    }
+
+    # Extraemos el top 50 de bandejas para el dashboard
+    db_trays_export = []
+    for t in sorted(final_db_trays, key=lambda x: get_occ(x), reverse=True)[:50]:
+        db_trays_export.append({
+            "tray_id": getattr(t, 'tray_id', 'N/A'),
+            "occupancy_pct": round(get_occ(t), 2),
+            "item_count": len(t.items),
+            "items": [{"sku": getattr(i, 'sku_id', 'N/A'), "vol": getattr(i, 'total_volume', 0)} for i in t.items[:5]]
+        })
+
+    db_params = {
+        "cycle_days": config.cycle_days,
+        "max_trays": config.max_trays,
+        "optimized_flag": args.optimize
+    }
+
+    db = SessionLocal()
+    try:
+        exec_id = save_micro_execution(db, user_id="cli_user_local", params=db_params, kpi=db_kpi, trays_export=db_trays_export)
+        print(f"✅ Ejecución Micro guardada con éxito. ID: {exec_id}")
+    except Exception as e:
+        print(f"❌ Error guardando en Base de Datos: {e}")
+    finally:
+        db.close()
 
     return 0
 

@@ -4,6 +4,8 @@ import argparse
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
+from slotting.db.database import SessionLocal, Base, engine
+from slotting.db.repository import save_macro_execution
 
 # --- FIX PYTHONPATH para encontrar 'src' ---
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -130,6 +132,47 @@ def main() -> int:
     
     # Llamamos a la exportación
     export_vlm_results(results, skus_dict_lookup, args.out_vlm)
+
+    # === GUARDADO EN BASE DE DATOS ===
+    # Calculamos KPIs para la DB
+    vlm_results = [r for r in results if r.storage_type == "VLM"]
+    rack_results = [r for r in results if r.storage_type == "RACK"]
+    vlm_assigned_volume = sum(getattr(r, 'cycle_volume', 0) for r in vlm_results)
+    target_vol = args.vlm_volume * args.vlm_occupancy
+    fill_pct = (vlm_assigned_volume / target_vol) * 100 if target_vol > 0 else 0
+
+    db_kpi = {
+        "total_skus": len(results),
+        "vlm_skus_count": len(vlm_results),
+        "rack_skus_count": len(rack_results),
+        "vlm_fill_percentage": round(fill_pct, 1)
+    }
+
+    db_skus_details = [{
+        "sku_id": r.sku_id,
+        "vol_cycle": getattr(r, 'cycle_volume', 0.0),
+        "abc_class": getattr(r, 'abc_class', 'N/A')
+    } for r in vlm_results]
+
+    db_params = {
+        "cycle_days": args.cycle_days,
+        "vlm_volume": args.vlm_volume,
+        "vlm_occupancy": args.vlm_occupancy
+    }
+
+    print_step_header("Guardando en Base de Datos PostgreSQL")
+    # Aseguramos que existan las tablas (útil al correr scripts locales)
+    Base.metadata.create_all(bind=engine) 
+    
+    db = SessionLocal()
+    try:
+        # Mockeamos el ID del usuario por ahora
+        exec_id = save_macro_execution(db, user_id="cli_user_local", params=db_params, kpi=db_kpi, skus_details=db_skus_details)
+        console.print(f"✅ Ejecución Macro guardada con éxito. ID: [bold blue]{exec_id}[/bold blue]")
+    except Exception as e:
+        console.print(f"[red]❌ Error guardando en Base de Datos: {e}[/red]")
+    finally:
+        db.close()
 
     return 0
 

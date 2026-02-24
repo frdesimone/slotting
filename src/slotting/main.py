@@ -24,6 +24,10 @@ from slotting.algorithms.micro.selection import select_groups
 from slotting.algorithms.micro.step7 import build_tray_plans
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
+from .db.database import engine, Base
+
+# Esto le dice a SQLAlchemy: "Che, revisá si existen las tablas. Si no, crealas"
+Base.metadata.create_all(bind=engine)
 
 logger = logging.getLogger("slotting")
 

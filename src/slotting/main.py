@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware # IMPORTANTE: Agregar esta importación
 
 from .config import get_settings
 from .logging_config import configure_logging
@@ -31,6 +32,17 @@ logger = logging.getLogger("slotting")
 # ==========================================
 app = FastAPI(title="Slotting API", description="API para algoritmos de Macro y Micro Slotting")
 
+# --- CONFIGURACIÓN DE CORS ---
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173") # O el puerto que use tu Vite/React local
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL, "http://localhost:3000"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 API_TOKEN = os.environ.get("API_TOKEN", "token_desarrollo_local_123")
 security = HTTPBearer()
 
@@ -43,31 +55,7 @@ def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security
         )
     return credentials.credentials
 
-# ==========================================
-# 2. FIREWALL POR CÓDIGO (RESTRICCIÓN DE IPs)
-# ==========================================
-ALLOWED_CIDRS = [
-    ipaddress.ip_network("35.90.103.132/30"),  # Retool
-    ipaddress.ip_network("44.208.168.68/30"),  # Retool
-    ipaddress.ip_network("127.0.0.0/8")        # Localhost
-]
 
-@app.middleware("http")
-async def restrict_ips(request: Request, call_next):
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.client.host
-
-    try:
-        ip_obj = ipaddress.ip_address(client_ip)
-        is_allowed = any(ip_obj in network for network in ALLOWED_CIDRS)
-        
-        if not is_allowed:
-            logger.warning(f"Acceso denegado a la IP: {client_ip}")
-            return JSONResponse(status_code=403, content={"detail": f"Access denied. IP {client_ip} not authorized."})
-    except ValueError:
-        return JSONResponse(status_code=400, content={"detail": "Invalid IP format."})
-    
-    return await call_next(request)
 
 # ==========================================
 # 3. UTILIDADES

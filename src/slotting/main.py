@@ -197,6 +197,7 @@ async def ejecutar_macro(
         if path_pedidos.exists(): path_pedidos.unlink()
         if path_maestro.exists(): path_maestro.unlink()
 
+
 @app.post("/api/v1/micro")
 async def ejecutar_micro(
     pedidos_file: UploadFile = File(...),
@@ -218,9 +219,45 @@ async def ejecutar_micro(
     CURRENT_USER_ID = "frontend_user_mock_123"
     
     try:
-        # ... (todo tu código de carga de datos, ejecución de Micro y optimización queda igual) ...
-        # (Líneas omitidas por brevedad: cargar datos, generar grupos, bandejas, optimizar si corresponde)
         
+        # 1. Cargar Datos
+        skus_dict, orders, stats = load_slotting_inputs_with_stats(
+            codes_csv_path=path_maestro,
+            orders_csv_path=path_pedidos,
+            cycle_days=cycle_days,
+            include_zero_rot=include_zero_rot
+        )
+        skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
+
+        # 2. Configurar Micro
+        config = MicroSlottingConfig(n_vlms=n_vlms, n_trays_per_vlm=n_trays_per_vlm, max_trays=n_vlms*n_trays_per_vlm)
+        
+        # 3. Flujo Core
+        affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
+        groups = build_groups(skus=skus_list, orders=orders, config=config)
+        selected_groups = select_groups(groups=groups, skus=skus_list, selection_cost_mode=config.selection_cost_mode)
+        
+        # Generar Greedy
+        tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_list, affinity_graph=affinity_graph, config=config)
+        final_trays = [tray for plan in tray_plans for tray in plan.trays]
+
+        # 4. Optimización (Si se pide)
+        if optimize_trays and final_trays:
+            sku_by_id = {sku.sku_id: sku for sku in skus_list}
+            subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
+            
+            hybrid = build_hybrid_kpi_state(
+                subgroups=list(subgroup_lookup.values()),
+                trays=final_trays,
+                sku_by_id=sku_by_id,
+                affinity_graph=affinity_graph,
+                config=config,
+            )
+            
+            opt_config = LocalSearchConfig(time_budget_ms=opt_time_ms, allow_annealing=True)
+            optimize(hybrid, opt_config)
+            final_trays = hybrid.all_trays()
+
         # 5. Preparar JSON de Respuesta
         if not final_trays:
             return {"status": "success", "kpi": {}, "trays": []}
@@ -274,3 +311,5 @@ async def ejecutar_micro(
     finally:
         if path_pedidos.exists(): path_pedidos.unlink()
         if path_maestro.exists(): path_maestro.unlink()
+
+        

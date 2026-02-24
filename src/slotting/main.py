@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from sqlalchemy.orm import Session
+
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -24,7 +26,9 @@ from slotting.algorithms.micro.selection import select_groups
 from slotting.algorithms.micro.step7 import build_tray_plans
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
-from .db.database import engine, Base
+from .db.database import engine, Base, get_db
+from .db.repository import save_macro_execution, save_micro_execution
+
 
 # Esto le dice a SQLAlchemy: "Che, revisá si existen las tablas. Si no, crealas"
 Base.metadata.create_all(bind=engine)
@@ -127,54 +131,63 @@ async def ejecutar_macro(
     cycle_days: float = Form(15.0),
     vlm_volume: float = Form(60.0),
     vlm_occupancy: float = Form(0.85),
-    token: str = Depends(verificar_token)
+    token: str = Depends(verificar_token),
+    db: Session = Depends(get_db) # <-- 1. INYECTAR LA BASE DE DATOS AQUÍ
 ):
     """Ejecuta el Macro Slotting (Asignación a VLM)."""
     path_pedidos = guardar_temp(pedidos_file)
     path_maestro = guardar_temp(maestro_file)
     
+    # Usuario mockeado (Hasta que implementes Clerk)
+    CURRENT_USER_ID = "frontend_user_mock_123"
+
     try:
         # 1. Cargar Datos
-        skus_dict, orders, stats = load_slotting_inputs_with_stats(
-            codes_csv_path=path_maestro,
-            orders_csv_path=path_pedidos,
-            cycle_days=cycle_days,
-            include_zero_rot=True 
-        )
+        skus_dict, orders, stats = load_slotting_inputs_with_stats(...)
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
         # 2. Ejecutar Macro
-        config = MacroSlottingConfig(
-            vlm_total_usable_volume=vlm_volume,
-            vlm_occupancy_target=vlm_occupancy
-        )
+        config = MacroSlottingConfig(...)
         results = run_macro_slotting(skus_list, config)
 
         # 3. Preparar JSON de Respuesta
         vlm_results = [r for r in results if r.storage_type == "VLM"]
         rack_results = [r for r in results if r.storage_type == "RACK"]
-        
         vlm_assigned_volume = sum(getattr(r, 'cycle_volume', 0) for r in vlm_results)
         target_vol = vlm_volume * vlm_occupancy
         fill_pct = (vlm_assigned_volume / target_vol) * 100 if target_vol > 0 else 0
 
-        # Para alimentar la tabla del frontend
         vlm_skus_details = [{
             "sku_id": r.sku_id,
             "vol_cycle": getattr(r, 'cycle_volume', 0.0),
             "abc_class": getattr(r, 'abc_class', 'N/A')
         } for r in vlm_results]
 
+        kpi_dict = {
+            "total_skus": len(results),
+            "vlm_skus_count": len(vlm_results),
+            "rack_skus_count": len(rack_results),
+            "vlm_volume_used": round(vlm_assigned_volume, 2),
+            "vlm_volume_target": round(target_vol, 2),
+            "vlm_fill_percentage": round(fill_pct, 1)
+        }
+
+        # --- 4. GUARDAR EN BASE DE DATOS ---
+        params_dict = {
+            "cycle_days": cycle_days,
+            "vlm_volume": vlm_volume,
+            "vlm_occupancy": vlm_occupancy
+        }
+        
+        # Llamamos a nuestro repository
+        exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
+        logger.info(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
+        # -----------------------------------
+
         return {
             "status": "success",
-            "kpi": {
-                "total_skus": len(results),
-                "vlm_skus_count": len(vlm_results),
-                "rack_skus_count": len(rack_results),
-                "vlm_volume_used": round(vlm_assigned_volume, 2),
-                "vlm_volume_target": round(target_vol, 2),
-                "vlm_fill_percentage": round(fill_pct, 1)
-            },
+            "execution_id": str(exec_id), # Le devolvemos al frontend el ID por si lo necesita
+            "kpi": kpi_dict,
             "vlm_skus": vlm_skus_details
         }
     except Exception as e:
@@ -184,91 +197,74 @@ async def ejecutar_macro(
         if path_pedidos.exists(): path_pedidos.unlink()
         if path_maestro.exists(): path_maestro.unlink()
 
-
 @app.post("/api/v1/micro")
 async def ejecutar_micro(
     pedidos_file: UploadFile = File(...),
-    maestro_file: UploadFile = File(...), # Se espera que sea el filtrado del Macro
+    maestro_file: UploadFile = File(...),
     cycle_days: float = Form(15.0),
     n_vlms: int = Form(10),
     n_trays_per_vlm: int = Form(100),
     include_zero_rot: bool = Form(False),
     optimize_trays: bool = Form(False),
     opt_time_ms: int = Form(10000),
-    token: str = Depends(verificar_token)
+    token: str = Depends(verificar_token),
+    db: Session = Depends(get_db) # <-- 1. INYECTAR LA BASE DE DATOS AQUÍ
 ):
     """Ejecuta el Micro Slotting (Armado de Bandejas), opcionalmente optimizado."""
     path_pedidos = guardar_temp(pedidos_file)
     path_maestro = guardar_temp(maestro_file)
+
+    # Usuario mockeado (Hasta que implementes Clerk)
+    CURRENT_USER_ID = "frontend_user_mock_123"
     
     try:
-        # 1. Cargar Datos
-        skus_dict, orders, stats = load_slotting_inputs_with_stats(
-            codes_csv_path=path_maestro,
-            orders_csv_path=path_pedidos,
-            cycle_days=cycle_days,
-            include_zero_rot=include_zero_rot
-        )
-        skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
-
-        # 2. Configurar Micro
-        config = MicroSlottingConfig(n_vlms=n_vlms, n_trays_per_vlm=n_trays_per_vlm, max_trays=n_vlms*n_trays_per_vlm)
+        # ... (todo tu código de carga de datos, ejecución de Micro y optimización queda igual) ...
+        # (Líneas omitidas por brevedad: cargar datos, generar grupos, bandejas, optimizar si corresponde)
         
-        # 3. Flujo Core
-        affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
-        groups = build_groups(skus=skus_list, orders=orders, config=config)
-        selected_groups = select_groups(groups=groups, skus=skus_list, selection_cost_mode=config.selection_cost_mode)
-        
-        # Generar Greedy
-        tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_list, affinity_graph=affinity_graph, config=config)
-        final_trays = [tray for plan in tray_plans for tray in plan.trays]
-
-        # 4. Optimización (Si se pide)
-        if optimize_trays and final_trays:
-            sku_by_id = {sku.sku_id: sku for sku in skus_list}
-            subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
-            
-            hybrid = build_hybrid_kpi_state(
-                subgroups=list(subgroup_lookup.values()),
-                trays=final_trays,
-                sku_by_id=sku_by_id,
-                affinity_graph=affinity_graph,
-                config=config,
-            )
-            
-            opt_config = LocalSearchConfig(time_budget_ms=opt_time_ms, allow_annealing=True)
-            optimize(hybrid, opt_config)
-            final_trays = hybrid.all_trays()
-
         # 5. Preparar JSON de Respuesta
         if not final_trays:
             return {"status": "success", "kpi": {}, "trays": []}
 
-        # Helpers para % de ocupación seguro
         def get_occ(t):
             return t.occupancy_percent if hasattr(t, 'occupancy_percent') else (getattr(t, 'area_used', 0)/getattr(t, 'max_area', 1))*100
 
         total_trays = len(final_trays)
         avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
 
-        # Formatear el top de bandejas para mostrar en UI
         trays_export = []
-        for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True)[:50]: # Retornamos top 50 para no reventar el frontend
+        for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True)[:50]:
             trays_export.append({
                 "tray_id": getattr(t, 'tray_id', 'N/A'),
                 "occupancy_pct": round(get_occ(t), 2),
                 "item_count": len(t.items),
-                "items": [{"sku": i.sku_id, "vol": getattr(i, 'total_volume', 0)} for i in t.items[:5]] # Top 5 items de la bandeja
+                "items": [{"sku": i.sku_id, "vol": getattr(i, 'total_volume', 0)} for i in t.items[:5]]
             })
+
+        kpi_dict = {
+            "total_trays": total_trays,
+            "skus_placed": len(skus_list),
+            "avg_area_occupancy_pct": round(avg_occupancy, 2),
+            "optimized": optimize_trays
+        }
+
+        # --- 6. GUARDAR EN BASE DE DATOS ---
+        params_dict = {
+            "cycle_days": cycle_days,
+            "n_vlms": n_vlms,
+            "n_trays_per_vlm": n_trays_per_vlm,
+            "include_zero_rot": include_zero_rot,
+            "optimize_trays": optimize_trays,
+            "opt_time_ms": opt_time_ms
+        }
+
+        exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)
+        logger.info(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
+        # -----------------------------------
 
         return {
             "status": "success",
-            "kpi": {
-                "total_trays": total_trays,
-                "skus_placed": len(skus_list),
-                "avg_area_occupancy_pct": round(avg_occupancy, 2),
-                "optimized": optimize_trays
-            },
+            "execution_id": str(exec_id), # Útil para que el frontend sepa el ID en la DB
+            "kpi": kpi_dict,
             "best_trays": trays_export
         }
 

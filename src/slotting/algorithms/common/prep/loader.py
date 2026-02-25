@@ -6,7 +6,6 @@ from slotting.models import SKU, Order
 from .stats import PrepStats
 from .codes import load_sku_records_from_codes
 from .orders import load_orders_from_pedidos
-from .parsing import _build_skus, _filter_orders_by_skus
 
 def load_slotting_inputs_with_stats(
     file_path: str | Path,

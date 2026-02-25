@@ -45,141 +45,161 @@ class SkuRecord:
     source_classification: str | None = None
     demand_kg_sem: float | None = None
 
-def load_sku_records_from_codes(path: str | Path) -> dict[str, SkuRecord]:
+def load_sku_records_from_codes(path: str | Path, mapping: dict = None) -> dict[str, SkuRecord]:
     path = Path(path)
+    if mapping is None:
+        mapping = {}
+        
     if not path.exists():
         raise FileNotFoundError(f"No se encontró el archivo de códigos: {path}")
 
     if path.suffix.lower() in [".xlsx", ".xls"]:
-        return _load_from_excel_bremen(path)
+        return _load_from_excel_bremen(path, mapping) # <-- Pasamos el mapping
     else:
+        # Si quisieras adaptar el CSV luego, también le podés pasar el mapping
         return _load_from_csv_generic(path)
 
 def _clean_numeric_col(series):
     """Convierte columna a numérico soportando comas decimales."""
     return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce')
 
-def _load_from_excel_bremen(path: Path) -> dict[str, SkuRecord]:
+def _load_from_excel_bremen(path: Path, mapping: dict) -> dict[str, SkuRecord]:
     print(f"📂 [Excel Loader] Procesando: {path.name}")
     
-    # 1. Detección de Hoja y Cabecera
+    # Extraemos los nombres dinámicos, los limpiamos de espacios y los pasamos a minúscula
+    sheet_base = mapping.get("sheet_maestro", "Base Cód.").strip().lower()
+    col_sku = mapping.get("col_sku_maestro", "Material").strip().lower()
+    col_vol = mapping.get("col_volumen", "M3/UMB").strip().lower()
+    col_peso = mapping.get("col_peso", "KG/UMB").strip().lower()
+    col_alto = mapping.get("col_alto", "Alto").strip().lower()
+    col_ancho = mapping.get("col_ancho", "Ancho").strip().lower()
+    col_largo = mapping.get("col_largo", "Largo").strip().lower()
+    
+    # --- EXTRAER DIMENSIONES REALES ---
+    dimensions_lookup = {}
     try:
-        df_preview = pd.read_excel(path, sheet_name=SHEET_BREMEN, header=None, nrows=20)
-        sheet_used = SHEET_BREMEN
+        xls = pd.ExcelFile(path)
+        # Buscar la hoja coincidiendo con el nombre dinámico del mapping
+        actual_sheet_base = next((s for s in xls.sheet_names if sheet_base in s.lower()), None)
+        
+        if actual_sheet_base:
+            df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=15)
+            dim_header_idx = 0
+            for i, r in df_dims_preview.iterrows():
+                row_str = [str(val).strip().lower() for val in r.values if pd.notna(val)]
+                
+                # Buscamos si la fila contiene nuestra columna dinámica de SKU y Alto
+                has_id = any(col_sku in k for k in row_str) or any("material" in k for k in row_str)
+                has_alto = any(col_alto in k for k in row_str) or any("alto" in k for k in row_str)
+                
+                if has_id and has_alto:
+                    dim_header_idx = i
+                    break
+            
+            df_dims = pd.read_excel(xls, sheet_name=actual_sheet_base, header=dim_header_idx)
+            df_dims.columns = [str(c).strip().lower() for c in df_dims.columns]
+            
+            # Matcheamos las columnas con las que definió el usuario
+            dim_id_col = next((c for c in df_dims.columns if col_sku in c), None)
+            if not dim_id_col: # Fallback de seguridad
+                dim_id_col = next((c for c in ["material", "código", "codigo ii"] if c in df_dims.columns), None)
+                
+            c_alto = next((c for c in df.columns if col_alto in c), None) if 'df' in locals() else next((c for c in df_dims.columns if col_alto in c), None)
+            c_ancho = next((c for c in df_dims.columns if col_ancho in c), None)
+            c_largo = next((c for c in df_dims.columns if col_largo in c), None)
+            
+            if dim_id_col and c_alto and c_ancho and c_largo:
+                for _, row in df_dims.iterrows():
+                    sku_str = str(row[dim_id_col]).strip()
+                    if not sku_str or sku_str in ["nan", "none"]: continue
+                    try:
+                        h = float(str(row[c_alto]).replace(',', '.'))
+                        w = float(str(row[c_ancho]).replace(',', '.'))
+                        l = float(str(row[c_largo]).replace(',', '.'))
+                        if h > 0 and w > 0 and l > 0:
+                            dimensions_lookup[sku_str] = (h, w, l)
+                    except ValueError:
+                        pass
+                print(f"   -> [Dimensiones] Extraídas dimensiones de '{actual_sheet_base}' para {len(dimensions_lookup)} SKUs.")
+    except Exception as e:
+        print(f"⚠️  No se pudieron extraer dimensiones de la hoja base: {e}")
+
+    # --- LECTURA DE HOJA PRINCIPAL ---
+    # Asumimos que la hoja de trabajo siempre tiene la data si la anterior era la "Base"
+    try:
+        # Intentamos la por defecto, o la primera si no la encontramos
+        df_preview = pd.read_excel(path, sheet_name="SLOTTING (trabajado)", header=None, nrows=20)
+        sheet_used = "SLOTTING (trabajado)"
     except Exception:
-        print(f"⚠️  No se encontró la hoja '{SHEET_BREMEN}', leyendo la primera hoja disponible.")
         df_preview = pd.read_excel(path, sheet_name=0, header=None, nrows=20)
         sheet_used = 0
 
-    header_idx = None
+    header_idx = 0
     for i, row in df_preview.iterrows():
         row_str = [str(val).strip().lower() for val in row.values if pd.notna(val)]
-        has_id = any(k in row_str for k in COL_BREMEN_MATERIAL)
-        has_metric = any(k in row_str for k in COL_BREMEN_KEY_METRICS)
-        
+        has_id = any(col_sku in k for k in row_str) or any("material" in k for k in row_str)
+        has_metric = any(col_vol in k or col_peso in k for k in row_str)
         if has_id and has_metric:
             header_idx = i
-            print(f"   -> Cabecera detectada en la fila {i} (Excel row {i+1}).")
             break
-            
-    if header_idx is None:
-        print("⚠️  No se detectó automáticamente la fila de cabecera. Usando fila 0.")
-        header_idx = 0
 
-    # 2. Cargar DataFrame
     df = pd.read_excel(path, sheet_name=sheet_used, header=header_idx)
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    id_col = next((c for c in COL_BREMEN_MATERIAL if c in df.columns), None)
+    id_col = next((c for c in df.columns if col_sku in c), None)
     if not id_col:
-        raise ValueError(f"No se encontró columna 'Material'. Columnas: {list(df.columns)}")
+        id_col = next((c for c in ["material", "código", "codigo ii"] if c in df.columns), None)
+        if not id_col:
+            raise ValueError(f"No se encontró columna para el ID (Buscando: {col_sku}). Columnas disponibles: {list(df.columns)}")
 
-    total_rows = len(df)
-    print(f"   -> Filas leídas inicialmente: {total_rows}")
+    # Identificamos las columnas numéricas
+    found_col_vol = next((c for c in df.columns if col_vol in c), None)
+    found_col_peso = next((c for c in df.columns if col_peso in c), None)
 
-    # 4. FILTROS CON SEGURIDAD (Show Must Go On)
-    
-    # A. Filtro Clasificación
-    if COL_BREMEN_CLASIFICACION in df.columns:
-        # Debug: Mostrar qué hay en la columna antes de filtrar
-        sample_vals = df[COL_BREMEN_CLASIFICACION].unique()[:5]
-        print(f"   -> [Debug] Valores en '{COL_BREMEN_CLASIFICACION}': {sample_vals}")
-        
+    # Filtros de seguridad
+    if found_col_vol:
         df_filtered = df.copy()
-        df_filtered[COL_BREMEN_CLASIFICACION] = df_filtered[COL_BREMEN_CLASIFICACION].astype(str).str.strip().str.lower()
-        df_filtered = df_filtered[df_filtered[COL_BREMEN_CLASIFICACION].isin(['nan', 'none', '', 'nat'])]
-        
-        if len(df_filtered) == 0 and len(df) > 0:
-            print(f"⚠️  [ALERTA] El filtro de Clasificación eliminó TODOS los registros.")
-            print(f"   -> IGNORANDO FILTRO para permitir la demo. Se usarán todos los items.")
-        else:
-            df = df_filtered
-            print(f"   -> [Filtro Clasificación] Restan: {len(df)}")
-    
-    # B. M3/UMB
-    if COL_BREMEN_M3 in df.columns:
-        df_filtered = df.copy()
-        df_filtered[COL_BREMEN_M3] = _clean_numeric_col(df_filtered[COL_BREMEN_M3])
-        df_filtered = df_filtered[df_filtered[COL_BREMEN_M3] > 0]
-        
-        if len(df_filtered) == 0 and len(df) > 0:
-            print(f"⚠️  [ALERTA] El filtro de Volumen eliminó TODOS los registros.")
-            print(f"   -> IGNORANDO FILTRO (Asumiendo volúmenes por defecto o revisión manual).")
-        else:
-            df = df_filtered
-            print(f"   -> [Filtro M3 > 0] Restan: {len(df)}")
+        df_filtered[found_col_vol] = _clean_numeric_col(df_filtered[found_col_vol])
+        df_filtered = df_filtered[df_filtered[found_col_vol] > 0]
+        if len(df_filtered) > 0: df = df_filtered
 
-    # C. KG/UMB
-    if COL_BREMEN_KG in df.columns:
+    if found_col_peso:
         df_filtered = df.copy()
-        df_filtered[COL_BREMEN_KG] = _clean_numeric_col(df_filtered[COL_BREMEN_KG])
-        # Debug Pesos
-        # print(f"DEBUG PESOS: {df_filtered[COL_BREMEN_KG].describe()}")
-        df_filtered = df_filtered[(df_filtered[COL_BREMEN_KG] > 0) & (df_filtered[COL_BREMEN_KG] <= 1.0)]
-        
-        if len(df_filtered) == 0 and len(df) > 0:
-             print(f"⚠️  [ALERTA] El filtro de Peso (<=1kg) eliminó TODOS los registros.")
-             print(f"   -> IGNORANDO FILTRO para permitir la demo.")
-        else:
-             df = df_filtered
-             print(f"   -> [Filtro Peso <= 1kg] Restan: {len(df)}")
-    
-    print(f"✅ [Final] Registros aptos para VLM: {len(df)}")
+        df_filtered[found_col_peso] = _clean_numeric_col(df_filtered[found_col_peso])
+        df_filtered = df_filtered[(df_filtered[found_col_peso] > 0) & (df_filtered[found_col_peso] <= 1.0)]
+        if len(df_filtered) > 0: df = df_filtered
 
-    # 5. Construcción de Objetos
+    # Construcción de Objetos
     records: dict[str, SkuRecord] = {}
-    
     for _, row in df.iterrows():
         sku_id = str(row[id_col]).strip()
-        if not sku_id or sku_id.lower() in ["nan", "none"]:
-            continue
+        if not sku_id or sku_id.lower() in ["nan", "none"]: continue
             
-        vol_m3 = float(row.get(COL_BREMEN_M3, 0.0))
-        # Si el volumen falló en convertirse a float antes, nos aseguramos aquí
+        vol_m3 = float(row.get(found_col_vol, 0.0)) if found_col_vol else 0.0
         if pd.isna(vol_m3): vol_m3 = 0.0
 
-        weight_kg = float(row.get(COL_BREMEN_KG, 0.0))
+        weight_kg = float(row.get(found_col_peso, 0.0)) if found_col_peso else 0.0
         if pd.isna(weight_kg): weight_kg = 0.0
 
-        demand_sem = float(row.get(COL_BREMEN_KG_SEM, 0.0)) if COL_BREMEN_KG_SEM in df.columns else None
-
-        if vol_m3 > 0:
+        if sku_id in dimensions_lookup:
+            h, w, l = dimensions_lookup[sku_id]
+        elif vol_m3 > 0:
             side_m = vol_m3 ** (1/3)
             side_mm = side_m * 1000.0
+            h = w = l = side_mm
         else:
-            side_mm = 0.0
+            h = w = l = 0.0
 
         record = SkuRecord(
             sku_id=sku_id,
             avg_units_per_line=None, 
             volume=vol_m3,
             weight=weight_kg,
-            height=side_mm,
-            width=side_mm,
-            length=side_mm,
+            height=h,
+            width=w,
+            length=l,
             is_sensitive=False,
             vlm_eligible=True,
-            demand_kg_sem=demand_sem,
             source_classification="BREMEN_XLS"
         )
         records[sku_id] = record

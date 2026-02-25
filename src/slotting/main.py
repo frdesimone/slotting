@@ -27,7 +27,8 @@ from slotting.algorithms.micro.step7 import build_tray_plans
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
 from .db.database import engine, Base, get_db
-from .db.repository import save_macro_execution, save_micro_execution
+from .db.repository import save_macro_execution, save_micro_execution, get_user_executions
+
 
 
 # Esto le dice a SQLAlchemy: "Che, revisá si existen las tablas. Si no, crealas"
@@ -83,32 +84,59 @@ def guardar_temp(upload_file: UploadFile) -> Path:
 def read_root():
     return {"status": "ok", "message": "API de Slotting operativa."}
 
-
-@app.post("/api/v1/outliers")
+@app.post("/api/v1/outliers") # (O /v1/outliers según corresponda en tu repo)
 async def detectar_outliers_endpoint(
     pedidos_file: UploadFile = File(...),
     maestro_file: UploadFile = File(...),
     cycle_days: float = Form(15.0),
+    sheet_maestro: str = Form("Base Cód."),
+    col_sku_maestro: str = Form("Material"),
+    col_volumen: str = Form("M3/UMB"),
+    col_peso: str = Form("KG/UMB"),
+    col_alto: str = Form("Alto"),
+    col_ancho: str = Form("Ancho"),
+    col_largo: str = Form("Largo"),
+    
+    sheet_pedidos: str = Form("Pedidos"),
+    col_pedido_id: str = Form("Nro pedido"),
+    col_pedido_sku: str = Form("Codigo II - Producto"),
+    col_pedido_cant: str = Form("Cantidad unidades"),  
     token: str = Depends(verificar_token)
 ):
-    """Detecta y retorna anomalías en el dataset."""
+    """Detecta y retorna anomalías en el dataset utilizando columnas dinámicas."""
     path_pedidos = guardar_temp(pedidos_file)
     path_maestro = guardar_temp(maestro_file)
     
     try:
-        # Cargar datos (Sin excluir nada)
+        # Empaquetamos la configuración para pasarla a tus parsers
+        mapping_config = {
+            "sheet_maestro": sheet_maestro,
+            "col_sku_maestro": col_sku_maestro,
+            "col_volumen": col_volumen,
+            "col_peso": col_peso,
+            "col_alto": col_alto,
+            "col_ancho": col_ancho,
+            "col_largo": col_largo,
+            "sheet_pedidos": sheet_pedidos,
+            "col_pedido_id": col_pedido_id,
+            "col_pedido_sku": col_pedido_sku,
+            "col_pedido_cant": col_pedido_cant
+        }
+
+        # Cargar datos pasándole el diccionario de mapeo
         skus_dict, orders, _ = load_slotting_inputs_with_stats(
             codes_csv_path=path_maestro,
             orders_csv_path=path_pedidos,
             cycle_days=cycle_days,
-            include_zero_rot=True
+            include_zero_rot=True,
+            mapping=mapping_config # <-- Nuevo argumento
         )
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
         # Detectar Outliers
         report = detect_outliers(skus_list, orders)
         
-        # Formatear respuesta JSON para Retool
+        # Formatear respuesta JSON
         return {
             "status": "success",
             "heavy_skus": [{"id": s.sku_id, "weight": s.weight} for s in report.heavy_skus],
@@ -142,14 +170,21 @@ async def ejecutar_macro(
     CURRENT_USER_ID = "frontend_user_mock_123"
 
     try:
-        # 1. Cargar Datos
-        skus_dict, orders, stats = load_slotting_inputs_with_stats(...)
-        skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
+        skus_list, orders, stats = load_slotting_inputs_with_stats(
+            codes_csv_path=path_maestro,
+            orders_csv_path=path_pedidos,
+            cycle_days=cycle_days,
+            period_days=180.0, # El default que usa tu loader
+            include_zero_rot=True 
+        )
 
-        # 2. Ejecutar Macro
-        config = MacroSlottingConfig(...)
+        # 2. Ejecutar Macro (le pasas la skus_list directamente)
+        config = MacroSlottingConfig(
+            vlm_total_usable_volume=vlm_volume,
+            vlm_occupancy_target=vlm_occupancy,
+            abc_thresholds=(0.80, 0.95)
+        )
         results = run_macro_slotting(skus_list, config)
-
         # 3. Preparar JSON de Respuesta
         vlm_results = [r for r in results if r.storage_type == "VLM"]
         rack_results = [r for r in results if r.storage_type == "RACK"]
@@ -220,19 +255,21 @@ async def ejecutar_micro(
     
     try:
         
-        # 1. Cargar Datos
-        skus_dict, orders, stats = load_slotting_inputs_with_stats(
+        # 1. Cargar Datos usando tu loader.py
+        skus_list, orders, stats = load_slotting_inputs_with_stats(
             codes_csv_path=path_maestro,
             orders_csv_path=path_pedidos,
             cycle_days=cycle_days,
+            period_days=180.0,
             include_zero_rot=include_zero_rot
         )
-        skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
+        # Ya no hace falta el "if isinstance..." porque tu loader ya devuelve una lista.
+        
         # 2. Configurar Micro
         config = MicroSlottingConfig(n_vlms=n_vlms, n_trays_per_vlm=n_trays_per_vlm, max_trays=n_vlms*n_trays_per_vlm)
         
-        # 3. Flujo Core
+        # 3. Flujo Core (le pasas skus_list y orders directo)
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
         groups = build_groups(skus=skus_list, orders=orders, config=config)
         selected_groups = select_groups(groups=groups, skus=skus_list, selection_cost_mode=config.selection_cost_mode)
@@ -312,4 +349,23 @@ async def ejecutar_micro(
         if path_pedidos.exists(): path_pedidos.unlink()
         if path_maestro.exists(): path_maestro.unlink()
 
-        
+@app.get("/api/v1/executions")
+async def listar_ejecuciones(
+    token: str = Depends(verificar_token),
+    db: Session = Depends(get_db)
+):
+    CURRENT_USER_ID = "frontend_user_mock_123"
+    ejecuciones = get_user_executions(db, CURRENT_USER_ID)
+    
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": str(e.id),
+                "job_type": e.job_type,
+                "status": e.status,
+                "created_at": e.created_at.isoformat(),
+                "parameters": e.parameters
+            } for e in ejecuciones
+        ]
+    }

@@ -23,29 +23,35 @@ def load_slotting_inputs(
     )
     return skus, orders
 
-
 def load_slotting_inputs_with_stats(
     codes_csv_path: str | Path,
     orders_csv_path: str | Path,
     cycle_days: float,
     period_days: float = 180.0,
     include_zero_rot: bool = False,
+    mapping: dict = None, # <-- 1. NUEVO ARGUMENTO
 ) -> tuple[list[SKU], list[Order], PrepStats]:
     """
     Carga genérica de datos para Micro y Macro slotting.
     """
+    if mapping is None:
+        mapping = {}
+
     _validate_input_params(cycle_days=cycle_days, period_days=period_days)
     stats = PrepStats()
     
     # 1. Cargar Maestro de Materiales (con flags de Macro)
-    sku_records = load_sku_records_from_codes(codes_csv_path)
+    # <-- 2. PASAMOS EL MAPPING
+    sku_records = load_sku_records_from_codes(codes_csv_path, mapping=mapping) 
     stats.total_skus_master = len(sku_records)
     
     # 2. Cargar Pedidos (Historia)
     allowed_skus = set(sku_records.keys())
+    # <-- 3. PASAMOS EL MAPPING (Para que orders.py también lo pueda usar luego)
     orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
         orders_csv_path,
         allowed_skus=allowed_skus,
+        mapping=mapping 
     )
     stats.order_stats = order_stats
 

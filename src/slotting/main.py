@@ -4,6 +4,7 @@ import ipaddress
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+import json
 
 from sqlalchemy.orm import Session
 
@@ -134,13 +135,20 @@ async def detectar_outliers_endpoint(
 
         report = detect_outliers(skus_list, orders)
         
-        return {
+        # Formatear respuesta JSON
+        response_data = {
             "status": "success",
             "heavy_skus": [{"id": s.sku_id, "weight": s.weight} for s in report.heavy_skus],
             "bulky_skus": [{"id": s.sku_id, "volume": s.volume} for s in report.bulky_skus],
             "massive_orders": [{"id": o.order_id, "lines": len(o.sku_ids)} for o in report.massive_orders],
             "ubiquitous_skus": [{"id": s_id, "count": count, "pct": pct} for s_id, count, pct in report.ubiquitous_skus]
         }
+        
+        # Imprimir en los logs
+        logger.info(f"📤 [RESPONSE OUTLIERS]: {json.dumps(response_data, default=str)}")
+        
+        return response_data
+    
     except Exception as e:
         logger.error(f"Error en outliers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -237,12 +245,17 @@ async def ejecutar_macro(
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
         logger.info(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
 
-        return {
+        response_data = {
             "status": "success",
-            "execution_id": str(exec_id),
+            "execution_id": str(exec_id), # Le devolvemos al frontend el ID por si lo necesita
             "kpi": kpi_dict,
             "vlm_skus": vlm_skus_details
         }
+        
+        logger.info(f"📤 [RESPONSE MACRO]: {json.dumps(response_data, default=str)}")
+        
+        return response_data
+    
     except Exception as e:
         logger.error(f"Error en macro: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -368,12 +381,16 @@ async def ejecutar_micro(
         exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)
         logger.info(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
 
-        return {
+        response_data = {
             "status": "success",
-            "execution_id": str(exec_id),
+            "execution_id": str(exec_id), 
             "kpi": kpi_dict,
             "best_trays": trays_export
         }
+        
+        logger.info(f"📤 [RESPONSE MICRO]: {json.dumps(response_data, default=str)}")
+        
+        return response_data
 
     except Exception as e:
         logger.error(f"Error en micro: {e}")

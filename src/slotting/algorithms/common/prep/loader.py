@@ -24,32 +24,27 @@ def load_slotting_inputs(
     return skus, orders
 
 def load_slotting_inputs_with_stats(
-    codes_csv_path: str | Path,
-    orders_csv_path: str | Path,
+    file_path: str | Path, # <-- AHORA ES UN SOLO PATH
     cycle_days: float,
     period_days: float = 180.0,
     include_zero_rot: bool = False,
-    mapping: dict = None, # <-- 1. NUEVO ARGUMENTO
+    mapping: dict = None,
 ) -> tuple[list[SKU], list[Order], PrepStats]:
-    """
-    Carga genérica de datos para Micro y Macro slotting.
-    """
+    """Carga genérica de datos leyendo desde un solo archivo Excel."""
     if mapping is None:
         mapping = {}
 
     _validate_input_params(cycle_days=cycle_days, period_days=period_days)
     stats = PrepStats()
     
-    # 1. Cargar Maestro de Materiales (con flags de Macro)
-    # <-- 2. PASAMOS EL MAPPING
-    sku_records = load_sku_records_from_codes(codes_csv_path, mapping=mapping) 
+    # 1. Cargar Maestro de Materiales usando el mismo archivo
+    sku_records = load_sku_records_from_codes(file_path, mapping=mapping) 
     stats.total_skus_master = len(sku_records)
     
-    # 2. Cargar Pedidos (Historia)
+    # 2. Cargar Pedidos usando el MISMO archivo
     allowed_skus = set(sku_records.keys())
-    # <-- 3. PASAMOS EL MAPPING (Para que orders.py también lo pueda usar luego)
     orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
-        orders_csv_path,
+        file_path, # <-- MISMO ARCHIVO
         allowed_skus=allowed_skus,
         mapping=mapping 
     )
@@ -66,7 +61,7 @@ def load_slotting_inputs_with_stats(
         stats=stats,
     )
     
-    # 4. Filtrar órdenes para que solo tengan SKUs válidos
+    # 4. Filtrar órdenes
     filtered_orders = _filter_orders_by_skus(orders, skus, stats)
 
     return skus, filtered_orders, stats

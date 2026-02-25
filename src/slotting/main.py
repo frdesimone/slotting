@@ -84,11 +84,12 @@ def guardar_temp(upload_file: UploadFile) -> Path:
 def read_root():
     return {"status": "ok", "message": "API de Slotting operativa."}
 
-@app.post("/api/v1/outliers") # (O /v1/outliers según corresponda en tu repo)
+@app.post("/api/v1/outliers") # o /v1/outliers según como lo tengas
 async def detectar_outliers_endpoint(
-    pedidos_file: UploadFile = File(...),
-    maestro_file: UploadFile = File(...),
+    file: UploadFile = File(...), # <-- AHORA ES UN SOLO ARCHIVO
     cycle_days: float = Form(15.0),
+    
+    # --- Mapeo Dinámico ---
     sheet_maestro: str = Form("Base Cód."),
     col_sku_maestro: str = Form("Material"),
     col_volumen: str = Form("M3/UMB"),
@@ -100,15 +101,14 @@ async def detectar_outliers_endpoint(
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
-    col_pedido_cant: str = Form("Cantidad unidades"),  
+    col_pedido_cant: str = Form("Cantidad unidades"),
+    
     token: str = Depends(verificar_token)
 ):
-    """Detecta y retorna anomalías en el dataset utilizando columnas dinámicas."""
-    path_pedidos = guardar_temp(pedidos_file)
-    path_maestro = guardar_temp(maestro_file)
+    """Detecta y retorna anomalías en el dataset (Un solo archivo Excel)."""
+    path_file = guardar_temp(file) # Guardamos el único Excel temporalmente
     
     try:
-        # Empaquetamos la configuración para pasarla a tus parsers
         mapping_config = {
             "sheet_maestro": sheet_maestro,
             "col_sku_maestro": col_sku_maestro,
@@ -123,20 +123,17 @@ async def detectar_outliers_endpoint(
             "col_pedido_cant": col_pedido_cant
         }
 
-        # Cargar datos pasándole el diccionario de mapeo
+        # Le pasamos el mismo path para todo
         skus_dict, orders, _ = load_slotting_inputs_with_stats(
-            codes_csv_path=path_maestro,
-            orders_csv_path=path_pedidos,
+            file_path=path_file, # <-- CAMBIO CLAVE
             cycle_days=cycle_days,
             include_zero_rot=True,
-            mapping=mapping_config # <-- Nuevo argumento
+            mapping=mapping_config
         )
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
-        # Detectar Outliers
         report = detect_outliers(skus_list, orders)
         
-        # Formatear respuesta JSON
         return {
             "status": "success",
             "heavy_skus": [{"id": s.sku_id, "weight": s.weight} for s in report.heavy_skus],
@@ -148,9 +145,7 @@ async def detectar_outliers_endpoint(
         logger.error(f"Error en outliers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if path_pedidos.exists(): path_pedidos.unlink()
-        if path_maestro.exists(): path_maestro.unlink()
-
+        if path_file.exists(): path_file.unlink() # Borramos el temporal
 
 @app.post("/api/v1/macro")
 async def ejecutar_macro(

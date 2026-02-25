@@ -14,7 +14,7 @@ def _clean_numeric_col(series):
 def load_orders_from_pedidos(
     path: str | Path,
     allowed_skus: set[str] | None = None,
-    mapping: dict = None, # <-- NUEVO: Recibimos el mapeo
+    mapping: dict = None, 
 ) -> tuple[list[Order], dict[str, int], dict[str, float], OrderLoadStats]:
     """Load orders from Excel/CSV and compute per-SKU rotation + units."""
     
@@ -35,24 +35,34 @@ def load_orders_from_pedidos(
     # 2. Cargar DataFrame con detección automática de hoja y cabecera
     if path_obj.suffix.lower() in [".xlsx", ".xls"]:
         xls = pd.ExcelFile(path_obj)
+        
         # Buscar la hoja que coincida con el nombre dinámico
         actual_sheet = next((s for s in xls.sheet_names if sheet_pedidos in s.lower()), None)
-        
         if not actual_sheet:
             actual_sheet = 0 # Fallback a la primera hoja disponible
             print(f"⚠️  No se encontró la hoja '{sheet_pedidos}', leyendo la primera disponible.")
             
-        # Buscar fila de cabecera escaneando las primeras 20 filas
-        df_preview = pd.read_excel(xls, sheet_name=actual_sheet, header=None, nrows=20)
+        # --- BUSCADOR DE CABECERAS PROFUNDO (100 FILAS) ---
+        df_preview = pd.read_excel(xls, sheet_name=actual_sheet, header=None, nrows=100)
         header_idx = 0
+        header_found = False
+        
         for i, row in df_preview.iterrows():
             row_str = [str(val).strip().lower() for val in row.values if pd.notna(val)]
             has_id = any(col_pedido_id in k for k in row_str)
             has_sku = any(col_pedido_sku in k for k in row_str)
+            
             if has_id and has_sku:
                 header_idx = i
-                print(f"   -> Cabecera detectada en la fila {i} (Excel row {i+1}).")
+                header_found = True
+                print(f"   -> [Orders Loader] Cabecera detectada en la fila {i} (Fila Excel {i+1}).")
                 break
+                
+        if not header_found:
+            print(f"⚠️  [ALERTA] No se detectó la cabecera en las primeras 100 líneas.")
+            print(f"   Buscábamos: ID='{col_pedido_id}', SKU='{col_pedido_sku}'")
+            print(f"   Usando fila 0 por defecto.")
+        # -------------------------------------------------
                 
         df = pd.read_excel(xls, sheet_name=actual_sheet, header=header_idx)
     else:
@@ -68,7 +78,7 @@ def load_orders_from_pedidos(
     cant_col = next((c for c in df.columns if col_pedido_cant in c), None)
 
     if not id_col or not sku_col:
-        raise ValueError(f"No se encontraron las columnas requeridas para pedidos. Buscando ID='{col_pedido_id}', SKU='{col_pedido_sku}'. Columnas disponibles: {list(df.columns)}")
+        raise ValueError(f"No se encontraron las columnas requeridas para pedidos.\nBuscando ID='{col_pedido_id}', SKU='{col_pedido_sku}'.\nColumnas disponibles: {list(df.columns)}")
 
     # Limpiar cantidad de posibles comas o textos raros
     if cant_col:

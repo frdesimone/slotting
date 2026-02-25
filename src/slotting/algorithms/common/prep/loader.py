@@ -4,7 +4,7 @@ from pathlib import Path
 
 from slotting.models import SKU, Order
 from .stats import PrepStats
-from .codes import load_sku_records_from_codes
+from .codes import load_sku_records_from_codes, SkuRecord
 from .orders import load_orders_from_pedidos
 
 def load_slotting_inputs_with_stats(

@@ -149,38 +149,64 @@ async def detectar_outliers_endpoint(
 
 @app.post("/api/v1/macro")
 async def ejecutar_macro(
-    pedidos_file: UploadFile = File(...),
-    maestro_file: UploadFile = File(...),
+    file: UploadFile = File(...), # <-- 1. UN SOLO ARCHIVO
     cycle_days: float = Form(15.0),
     vlm_volume: float = Form(60.0),
     vlm_occupancy: float = Form(0.85),
+    
+    # --- 2. MAPEO DINÁMICO ---
+    sheet_maestro: str = Form("Base Cód."),
+    col_sku_maestro: str = Form("Material"),
+    col_volumen: str = Form("M3/UMB"),
+    col_peso: str = Form("KG/UMB"),
+    col_alto: str = Form("Alto"),
+    col_ancho: str = Form("Ancho"),
+    col_largo: str = Form("Largo"),
+    
+    sheet_pedidos: str = Form("Pedidos"),
+    col_pedido_id: str = Form("Nro pedido"),
+    col_pedido_sku: str = Form("Codigo II - Producto"),
+    col_pedido_cant: str = Form("Cantidad unidades"),
+    # -------------------------
+    
     token: str = Depends(verificar_token),
-    db: Session = Depends(get_db) # <-- 1. INYECTAR LA BASE DE DATOS AQUÍ
+    db: Session = Depends(get_db)
 ):
     """Ejecuta el Macro Slotting (Asignación a VLM)."""
-    path_pedidos = guardar_temp(pedidos_file)
-    path_maestro = guardar_temp(maestro_file)
-    
-    # Usuario mockeado (Hasta que implementes Clerk)
+    path_file = guardar_temp(file)
     CURRENT_USER_ID = "frontend_user_mock_123"
 
     try:
+        mapping_config = {
+            "sheet_maestro": sheet_maestro,
+            "col_sku_maestro": col_sku_maestro,
+            "col_volumen": col_volumen,
+            "col_peso": col_peso,
+            "col_alto": col_alto,
+            "col_ancho": col_ancho,
+            "col_largo": col_largo,
+            "sheet_pedidos": sheet_pedidos,
+            "col_pedido_id": col_pedido_id,
+            "col_pedido_sku": col_pedido_sku,
+            "col_pedido_cant": col_pedido_cant
+        }
+
+        # 3. LLAMADA ACTUALIZADA AL LOADER
         skus_list, orders, stats = load_slotting_inputs_with_stats(
-            codes_csv_path=path_maestro,
-            orders_csv_path=path_pedidos,
+            file_path=path_file,
             cycle_days=cycle_days,
-            period_days=180.0, # El default que usa tu loader
-            include_zero_rot=True 
+            period_days=180.0,
+            include_zero_rot=True,
+            mapping=mapping_config
         )
 
-        # 2. Ejecutar Macro (le pasas la skus_list directamente)
         config = MacroSlottingConfig(
             vlm_total_usable_volume=vlm_volume,
             vlm_occupancy_target=vlm_occupancy,
             abc_thresholds=(0.80, 0.95)
         )
         results = run_macro_slotting(skus_list, config)
-        # 3. Preparar JSON de Respuesta
+        
         vlm_results = [r for r in results if r.storage_type == "VLM"]
         rack_results = [r for r in results if r.storage_type == "RACK"]
         vlm_assigned_volume = sum(getattr(r, 'cycle_volume', 0) for r in vlm_results)
@@ -202,21 +228,18 @@ async def ejecutar_macro(
             "vlm_fill_percentage": round(fill_pct, 1)
         }
 
-        # --- 4. GUARDAR EN BASE DE DATOS ---
         params_dict = {
             "cycle_days": cycle_days,
             "vlm_volume": vlm_volume,
             "vlm_occupancy": vlm_occupancy
         }
         
-        # Llamamos a nuestro repository
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
         logger.info(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
-        # -----------------------------------
 
         return {
             "status": "success",
-            "execution_id": str(exec_id), # Le devolvemos al frontend el ID por si lo necesita
+            "execution_id": str(exec_id),
             "kpi": kpi_dict,
             "vlm_skus": vlm_skus_details
         }
@@ -224,56 +247,74 @@ async def ejecutar_macro(
         logger.error(f"Error en macro: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if path_pedidos.exists(): path_pedidos.unlink()
-        if path_maestro.exists(): path_maestro.unlink()
+        if path_file.exists(): path_file.unlink()
 
 
 @app.post("/api/v1/micro")
 async def ejecutar_micro(
-    pedidos_file: UploadFile = File(...),
-    maestro_file: UploadFile = File(...),
+    file: UploadFile = File(...), # <-- 1. UN SOLO ARCHIVO
     cycle_days: float = Form(15.0),
     n_vlms: int = Form(10),
     n_trays_per_vlm: int = Form(100),
     include_zero_rot: bool = Form(False),
     optimize_trays: bool = Form(False),
     opt_time_ms: int = Form(10000),
+    
+    # --- 2. MAPEO DINÁMICO ---
+    sheet_maestro: str = Form("Base Cód."),
+    col_sku_maestro: str = Form("Material"),
+    col_volumen: str = Form("M3/UMB"),
+    col_peso: str = Form("KG/UMB"),
+    col_alto: str = Form("Alto"),
+    col_ancho: str = Form("Ancho"),
+    col_largo: str = Form("Largo"),
+    
+    sheet_pedidos: str = Form("Pedidos"),
+    col_pedido_id: str = Form("Nro pedido"),
+    col_pedido_sku: str = Form("Codigo II - Producto"),
+    col_pedido_cant: str = Form("Cantidad unidades"),
+    # -------------------------
+    
     token: str = Depends(verificar_token),
-    db: Session = Depends(get_db) # <-- 1. INYECTAR LA BASE DE DATOS AQUÍ
+    db: Session = Depends(get_db)
 ):
     """Ejecuta el Micro Slotting (Armado de Bandejas), opcionalmente optimizado."""
-    path_pedidos = guardar_temp(pedidos_file)
-    path_maestro = guardar_temp(maestro_file)
-
-    # Usuario mockeado (Hasta que implementes Clerk)
+    path_file = guardar_temp(file)
     CURRENT_USER_ID = "frontend_user_mock_123"
     
     try:
-        
-        # 1. Cargar Datos usando tu loader.py
+        mapping_config = {
+            "sheet_maestro": sheet_maestro,
+            "col_sku_maestro": col_sku_maestro,
+            "col_volumen": col_volumen,
+            "col_peso": col_peso,
+            "col_alto": col_alto,
+            "col_ancho": col_ancho,
+            "col_largo": col_largo,
+            "sheet_pedidos": sheet_pedidos,
+            "col_pedido_id": col_pedido_id,
+            "col_pedido_sku": col_pedido_sku,
+            "col_pedido_cant": col_pedido_cant
+        }
+
+        # 3. LLAMADA ACTUALIZADA AL LOADER
         skus_list, orders, stats = load_slotting_inputs_with_stats(
-            codes_csv_path=path_maestro,
-            orders_csv_path=path_pedidos,
+            file_path=path_file,
             cycle_days=cycle_days,
             period_days=180.0,
-            include_zero_rot=include_zero_rot
+            include_zero_rot=include_zero_rot,
+            mapping=mapping_config
         )
 
-        # Ya no hace falta el "if isinstance..." porque tu loader ya devuelve una lista.
-        
-        # 2. Configurar Micro
         config = MicroSlottingConfig(n_vlms=n_vlms, n_trays_per_vlm=n_trays_per_vlm, max_trays=n_vlms*n_trays_per_vlm)
         
-        # 3. Flujo Core (le pasas skus_list y orders directo)
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
         groups = build_groups(skus=skus_list, orders=orders, config=config)
         selected_groups = select_groups(groups=groups, skus=skus_list, selection_cost_mode=config.selection_cost_mode)
         
-        # Generar Greedy
         tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_list, affinity_graph=affinity_graph, config=config)
         final_trays = [tray for plan in tray_plans for tray in plan.trays]
 
-        # 4. Optimización (Si se pide)
         if optimize_trays and final_trays:
             sku_by_id = {sku.sku_id: sku for sku in skus_list}
             subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
@@ -290,7 +331,6 @@ async def ejecutar_micro(
             optimize(hybrid, opt_config)
             final_trays = hybrid.all_trays()
 
-        # 5. Preparar JSON de Respuesta
         if not final_trays:
             return {"status": "success", "kpi": {}, "trays": []}
 
@@ -316,7 +356,6 @@ async def ejecutar_micro(
             "optimized": optimize_trays
         }
 
-        # --- 6. GUARDAR EN BASE DE DATOS ---
         params_dict = {
             "cycle_days": cycle_days,
             "n_vlms": n_vlms,
@@ -328,11 +367,10 @@ async def ejecutar_micro(
 
         exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)
         logger.info(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
-        # -----------------------------------
 
         return {
             "status": "success",
-            "execution_id": str(exec_id), # Útil para que el frontend sepa el ID en la DB
+            "execution_id": str(exec_id),
             "kpi": kpi_dict,
             "best_trays": trays_export
         }
@@ -341,26 +379,4 @@ async def ejecutar_micro(
         logger.error(f"Error en micro: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if path_pedidos.exists(): path_pedidos.unlink()
-        if path_maestro.exists(): path_maestro.unlink()
-
-@app.get("/api/v1/executions")
-async def listar_ejecuciones(
-    token: str = Depends(verificar_token),
-    db: Session = Depends(get_db)
-):
-    CURRENT_USER_ID = "frontend_user_mock_123"
-    ejecuciones = get_user_executions(db, CURRENT_USER_ID)
-    
-    return {
-        "status": "success",
-        "data": [
-            {
-                "id": str(e.id),
-                "job_type": e.job_type,
-                "status": e.status,
-                "created_at": e.created_at.isoformat(),
-                "parameters": e.parameters
-            } for e in ejecuciones
-        ]
-    }
+        if path_file.exists(): path_file.unlink()

@@ -1,10 +1,72 @@
-from __future__ import annotations
+import gc
+import pandas as pd
 from pathlib import Path
 
-from slotting.models import Order, SKU
-from .codes import SkuRecord, load_sku_records_from_codes
-from .orders import load_orders_from_pedidos
+from slotting.models import SKU, Order
 from .stats import PrepStats
+from .codes import load_sku_records_from_codes
+from .orders import load_orders_from_pedidos
+from .parsing import _validate_input_params, _build_skus, _filter_orders_by_skus
+
+def load_slotting_inputs_with_stats(
+    file_path: str | Path,
+    cycle_days: float,
+    period_days: float = 180.0,
+    include_zero_rot: bool = False,
+    mapping: dict = None,
+) -> tuple[list[SKU], list[Order], PrepStats]:
+    """Carga genérica de datos leyendo desde un solo archivo Excel y controlando memoria."""
+    if mapping is None:
+        mapping = {}
+
+    _validate_input_params(cycle_days=cycle_days, period_days=period_days)
+    stats = PrepStats()
+    
+    # 1. ABRIR EL ARCHIVO UNA SOLA VEZ
+    xls = None
+    if str(file_path).lower().endswith(('.xlsx', '.xls')):
+        print("📦 [Memoria] Abriendo Excel de forma global para evitar duplicados en RAM...")
+        xls = pd.ExcelFile(file_path)
+
+    # 2. Cargar Maestro
+    sku_records = load_sku_records_from_codes(file_path, mapping=mapping, xls=xls) 
+    stats.total_skus_master = len(sku_records)
+    
+    # Limpiar RAM intermedia
+    gc.collect()
+    
+    # 3. Cargar Pedidos
+    allowed_skus = set(sku_records.keys())
+    orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
+        file_path, 
+        allowed_skus=allowed_skus,
+        mapping=mapping,
+        xls=xls # Le pasamos el mismo Excel abierto
+    )
+    stats.order_stats = order_stats
+
+    # 4. CERRAR EL EXCEL Y LIBERAR MEMORIA
+    if xls is not None:
+        xls.close()
+        del xls
+        gc.collect()
+        print("🧹 [Memoria] Archivo Excel cerrado y RAM liberada.")
+
+    # 5. Fusionar info en objetos SKU finales
+    skus = _build_skus(
+        sku_records=sku_records,
+        rot_by_sku=rot_by_sku,
+        units_by_sku=units_by_sku,
+        cycle_days=cycle_days,
+        period_days=period_days,
+        include_zero_rot=include_zero_rot,
+        stats=stats,
+    )
+    
+    # 6. Filtrar órdenes
+    filtered_orders = _filter_orders_by_skus(orders, skus, stats)
+
+    return skus, filtered_orders, stats
 
 def load_slotting_inputs(
     codes_csv_path: str | Path,
@@ -22,49 +84,6 @@ def load_slotting_inputs(
         include_zero_rot=include_zero_rot,
     )
     return skus, orders
-
-def load_slotting_inputs_with_stats(
-    file_path: str | Path, # <-- AHORA ES UN SOLO PATH
-    cycle_days: float,
-    period_days: float = 180.0,
-    include_zero_rot: bool = False,
-    mapping: dict = None,
-) -> tuple[list[SKU], list[Order], PrepStats]:
-    """Carga genérica de datos leyendo desde un solo archivo Excel."""
-    if mapping is None:
-        mapping = {}
-
-    _validate_input_params(cycle_days=cycle_days, period_days=period_days)
-    stats = PrepStats()
-    
-    # 1. Cargar Maestro de Materiales usando el mismo archivo
-    sku_records = load_sku_records_from_codes(file_path, mapping=mapping) 
-    stats.total_skus_master = len(sku_records)
-    
-    # 2. Cargar Pedidos usando el MISMO archivo
-    allowed_skus = set(sku_records.keys())
-    orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
-        file_path, # <-- MISMO ARCHIVO
-        allowed_skus=allowed_skus,
-        mapping=mapping 
-    )
-    stats.order_stats = order_stats
-
-    # 3. Fusionar info en objetos SKU finales
-    skus = _build_skus(
-        sku_records=sku_records,
-        rot_by_sku=rot_by_sku,
-        units_by_sku=units_by_sku,
-        cycle_days=cycle_days,
-        period_days=period_days,
-        include_zero_rot=include_zero_rot,
-        stats=stats,
-    )
-    
-    # 4. Filtrar órdenes
-    filtered_orders = _filter_orders_by_skus(orders, skus, stats)
-
-    return skus, filtered_orders, stats
 
 def _build_skus(
     sku_records: dict[str, SkuRecord],

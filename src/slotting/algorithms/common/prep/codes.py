@@ -126,17 +126,22 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     header_found = False
     for i, row in df_preview.iterrows():
         row_str = [clean_text(val) for val in row.values if pd.notna(val)]
-        # Ahora SOLO busca el SKU, es mucho más seguro para encontrar la fila
-        has_id = any(col_sku in k for k in row_str) or any("material" in k for k in row_str)
         
-        if has_id:
+        # 1. Búsqueda estricta (La celda es exactamente igual al nombre de la columna)
+        has_id_exact = any(col_sku == k for k in row_str)
+        
+        # 2. Búsqueda combinada (Si es un texto que lo contiene, exigimos que también esté el Volumen o Peso para evitar falsos positivos con títulos)
+        has_id_sub = any(col_sku in k for k in row_str)
+        has_metric = any(col_vol in k or col_peso in k for k in row_str)
+        
+        if has_id_exact or (has_id_sub and has_metric):
             header_idx = i
             header_found = True
             print(f"   -> [Codes Loader] Cabecera detectada en la fila {i} (Excel {i+1}).")
             break
             
     if not header_found:
-        print(f"⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas. Buscábamos '{col_sku}'.")
+        print(f"⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas.")
     del df_preview
 
     # CARGA REAL

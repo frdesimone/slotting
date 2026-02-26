@@ -9,7 +9,8 @@ from slotting.models import Order
 from .stats import OrderLoadStats
 
 def _clean_numeric_col(series):
-    return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce')
+    # Convertimos a número limpiando comas y forzamos el valor absoluto
+    return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce').abs()
 
 def load_orders_from_pedidos(
     path: str | Path,
@@ -101,7 +102,7 @@ def load_orders_from_pedidos(
 
         units = 1.0
         if cant_col and pd.notna(row[cant_col]):
-            units = float(row[cant_col])
+            units = abs(float(row[cant_col]))
 
         order_items[o_id].add(s_id)
         rot_by_sku[s_id] += 1

@@ -59,7 +59,8 @@ def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.
         return _load_from_csv_generic(path)
 
 def _clean_numeric_col(series):
-    return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce')
+    # Convertimos a número limpiando comas y forzamos el valor absoluto
+    return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce').abs()
 
 def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
     print(f"📂 [Codes Loader] Procesando códigos...")
@@ -109,7 +110,10 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
                 sku_str = str(row[dim_id_col]).strip()
                 if not sku_str or sku_str in ["nan", "none"]: continue
                 try:
-                    h, w, l = float(str(row[c_alto]).replace(',','.')), float(str(row[c_ancho]).replace(',','.')), float(str(row[c_largo]).replace(',','.'))
+                    # Usamos abs() para blindar las dimensiones también
+                    h = abs(float(str(row[c_alto]).replace(',','.')))
+                    w = abs(float(str(row[c_ancho]).replace(',','.')))
+                    l = abs(float(str(row[c_largo]).replace(',','.')))
                     if h > 0 and w > 0 and l > 0: dimensions_lookup[sku_str] = (h, w, l)
                 except ValueError: pass
         del df_dims
@@ -162,11 +166,11 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     if not col_p:
         print(f"⚠️ [Codes Loader] ALERTA: No se encontró la columna de Peso. Buscábamos '{col_peso}'.")
 
-    # Función ultra-segura para convertir textos con comas a floats
+    # Función ultra-segura para convertir textos con comas a floats absolutos
     def safe_float(val):
         if pd.isna(val) or val is None: return 0.0
         try:
-            return float(str(val).replace(',', '.').strip())
+            return abs(float(str(val).replace(',', '.').strip())) # <--- abs() AQUÍ
         except ValueError:
             return 0.0
 

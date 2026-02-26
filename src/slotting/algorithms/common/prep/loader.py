@@ -20,6 +20,9 @@ def load_slotting_inputs_with_stats(
     if mapping is None:
         mapping = {}
 
+    if excluded_skus is None: excluded_skus = set()
+    if excluded_orders is None: excluded_orders = set()
+
     _validate_input_params(cycle_days=cycle_days, period_days=period_days)
     stats = PrepStats()
     

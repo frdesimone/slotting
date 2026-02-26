@@ -82,7 +82,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     actual_sheet_base = next((s for s in xls.sheet_names if sheet_base in s.lower()), None)
     
     if actual_sheet_base:
-        df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=100) # Escaneo a 100
+        df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=100)
         dim_header_idx = 0
         for i, r in df_dims_preview.iterrows():
             row_str = [str(val).strip().lower() for val in r.values if pd.notna(val)]
@@ -95,7 +95,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         df_dims = pd.read_excel(xls, sheet_name=actual_sheet_base, header=dim_header_idx)
         df_dims.columns = [str(c).strip().lower() for c in df_dims.columns]
         
-        dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df_dims.columns), None)
+        dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
         c_alto = next((c for c in df_dims.columns if col_alto in c), None)
         c_ancho = next((c for c in df_dims.columns if col_ancho in c), None)
         c_largo = next((c for c in df_dims.columns if col_largo in c), None)
@@ -113,7 +113,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     # --- HOJA PRINCIPAL ---
     try:
         sheet_used = "SLOTTING (trabajado)"
-        df_preview = pd.read_excel(xls, sheet_name=sheet_used, header=None, nrows=100) # Escaneo a 100
+        df_preview = pd.read_excel(xls, sheet_name=sheet_used, header=None, nrows=100)
     except Exception:
         sheet_used = 0
         df_preview = pd.read_excel(xls, sheet_name=sheet_used, header=None, nrows=100)
@@ -133,15 +133,31 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     id_col = next((c for c in df.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
     if not id_col: raise ValueError(f"No se encontró ID (Buscando: {col_sku}). Columnas: {list(df.columns)}")
 
-    col_v, col_p = next((c for c in df.columns if col_vol in c), None), next((c for c in df.columns if col_peso in c), None)
+    # Detectamos las columnas exactas
+    col_v = next((c for c in df.columns if col_vol in c), None)
+    col_p = next((c for c in df.columns if col_peso in c), None)
+
+    # ALERTA EN LOGS SI FALLA
+    if not col_v:
+        print(f"⚠️ [Codes Loader] ALERTA: No se encontró la columna de Volumen. Buscábamos '{col_vol}'. Columnas disponibles: {list(df.columns)}")
+    if not col_p:
+        print(f"⚠️ [Codes Loader] ALERTA: No se encontró la columna de Peso. Buscábamos '{col_peso}'.")
+
+    # Función ultra-segura para convertir textos con comas a floats
+    def safe_float(val):
+        if pd.isna(val) or val is None: return 0.0
+        try:
+            return float(str(val).replace(',', '.').strip())
+        except ValueError:
+            return 0.0
 
     records = {}
     for _, row in df.iterrows():
         sku_id = str(row[id_col]).strip()
         if not sku_id or sku_id.lower() in ["nan", "none"]: continue
             
-        vol_m3 = float(row.get(col_v, 0.0)) if col_v else 0.0
-        weight_kg = float(row.get(col_p, 0.0)) if col_p else 0.0
+        vol_m3 = safe_float(row[col_v]) if col_v else 0.0
+        weight_kg = safe_float(row[col_p]) if col_p else 0.0
         
         h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
 

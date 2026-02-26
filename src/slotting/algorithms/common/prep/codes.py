@@ -64,13 +64,17 @@ def _clean_numeric_col(series):
 def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
     print(f"📂 [Codes Loader] Procesando códigos...")
     
-    sheet_base = mapping.get("sheet_maestro", "Base Cód.").strip().lower()
-    col_sku = mapping.get("col_sku_maestro", "Material").strip().lower()
-    col_vol = mapping.get("col_volumen", "M3/UMB").strip().lower()
-    col_peso = mapping.get("col_peso", "KG/UMB").strip().lower()
-    col_alto = mapping.get("col_alto", "Alto").strip().lower()
-    col_ancho = mapping.get("col_ancho", "Ancho").strip().lower()
-    col_largo = mapping.get("col_largo", "Largo").strip().lower()
+    # Limpiador de textos (quita saltos de línea ocultos de Excel)
+    def clean_text(text):
+        return str(text).replace('\n', ' ').replace('\r', '').strip().lower()
+
+    sheet_base = clean_text(mapping.get("sheet_maestro", "Base Cód."))
+    col_sku = clean_text(mapping.get("col_sku_maestro", "Material"))
+    col_vol = clean_text(mapping.get("col_volumen", "M3/UMB"))
+    col_peso = clean_text(mapping.get("col_peso", "KG/UMB"))
+    col_alto = clean_text(mapping.get("col_alto", "Alto"))
+    col_ancho = clean_text(mapping.get("col_ancho", "Ancho"))
+    col_largo = clean_text(mapping.get("col_largo", "Largo"))
     
     should_close_xls = False
     if xls is None:
@@ -79,13 +83,13 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     
     # --- DIMENSIONES ---
     dimensions_lookup = {}
-    actual_sheet_base = next((s for s in xls.sheet_names if sheet_base in s.lower()), None)
+    actual_sheet_base = next((s for s in xls.sheet_names if sheet_base in clean_text(s)), None)
     
     if actual_sheet_base:
         df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=100)
         dim_header_idx = 0
         for i, r in df_dims_preview.iterrows():
-            row_str = [str(val).strip().lower() for val in r.values if pd.notna(val)]
+            row_str = [clean_text(val) for val in r.values if pd.notna(val)]
             if (any(col_sku in k for k in row_str) or any("material" in k for k in row_str)) and \
                (any(col_alto in k for k in row_str) or any("alto" in k for k in row_str)):
                 dim_header_idx = i
@@ -93,9 +97,9 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         del df_dims_preview
         
         df_dims = pd.read_excel(xls, sheet_name=actual_sheet_base, header=dim_header_idx)
-        df_dims.columns = [str(c).strip().lower() for c in df_dims.columns]
+        df_dims.columns = [clean_text(c) for c in df_dims.columns]
         
-        dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
+        dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df_dims.columns), None)
         c_alto = next((c for c in df_dims.columns if col_alto in c), None)
         c_ancho = next((c for c in df_dims.columns if col_ancho in c), None)
         c_largo = next((c for c in df_dims.columns if col_largo in c), None)
@@ -119,21 +123,31 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         df_preview = pd.read_excel(xls, sheet_name=sheet_used, header=None, nrows=100)
 
     header_idx = 0
+    header_found = False
     for i, row in df_preview.iterrows():
-        row_str = [str(val).strip().lower() for val in row.values if pd.notna(val)]
-        if (any(col_sku in k for k in row_str) or any("material" in k for k in row_str)) and \
-           (any(col_vol in k or col_peso in k for k in row_str)):
+        row_str = [clean_text(val) for val in row.values if pd.notna(val)]
+        # Ahora SOLO busca el SKU, es mucho más seguro para encontrar la fila
+        has_id = any(col_sku in k for k in row_str) or any("material" in k for k in row_str)
+        
+        if has_id:
             header_idx = i
+            header_found = True
+            print(f"   -> [Codes Loader] Cabecera detectada en la fila {i} (Excel {i+1}).")
             break
+            
+    if not header_found:
+        print(f"⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas. Buscábamos '{col_sku}'.")
     del df_preview
 
+    # CARGA REAL
     df = pd.read_excel(xls, sheet_name=sheet_used, header=header_idx)
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    # Limpiamos todas las columnas de la tabla final
+    df.columns = [clean_text(c) for c in df.columns]
 
     id_col = next((c for c in df.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
-    if not id_col: raise ValueError(f"No se encontró ID (Buscando: {col_sku}). Columnas: {list(df.columns)}")
+    if not id_col: raise ValueError(f"No se encontró ID (Buscando: '{col_sku}'). Columnas disponibles: {list(df.columns)}")
 
-    # Detectamos las columnas exactas
+    # Detectamos las columnas exactas (con la limpieza de saltos de línea ya aplicada)
     col_v = next((c for c in df.columns if col_vol in c), None)
     col_p = next((c for c in df.columns if col_peso in c), None)
 

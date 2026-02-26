@@ -319,7 +319,10 @@ async def ejecutar_micro(
             mapping=mapping_config
         )
 
-        config = MicroSlottingConfig(n_vlms=n_vlms, n_trays_per_vlm=n_trays_per_vlm, max_trays=n_vlms*n_trays_per_vlm)
+        config = MicroSlottingConfig(
+            cycle_days=cycle_days,
+            max_trays=n_vlms * n_trays_per_vlm
+        )
         
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
         groups = build_groups(skus=skus_list, orders=orders, config=config)

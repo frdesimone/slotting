@@ -268,6 +268,7 @@ async def ejecutar_macro(
 async def ejecutar_micro(
     file: UploadFile = File(...), # <-- 1. UN SOLO ARCHIVO
     cycle_days: float = Form(15.0),
+    vlm_skus_ids: str = Form("[]"),
     n_vlms: int = Form(10),
     n_trays_per_vlm: int = Form(100),
     include_zero_rot: bool = Form(False),
@@ -297,6 +298,8 @@ async def ejecutar_micro(
     CURRENT_USER_ID = "frontend_user_mock_123"
     
     try:
+
+        
         mapping_config = {
             "sheet_maestro": sheet_maestro,
             "col_sku_maestro": col_sku_maestro,
@@ -311,14 +314,25 @@ async def ejecutar_micro(
             "col_pedido_cant": col_pedido_cant
         }
 
+        allowed_vlm_skus = set(json.loads(vlm_skus_ids))
+        print(f"🚀 [Micro] Recibidos {len(allowed_vlm_skus)} SKUs para procesar.")
+
         # 3. LLAMADA ACTUALIZADA AL LOADER
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,
             cycle_days=cycle_days,
             period_days=180.0,
             include_zero_rot=include_zero_rot,
-            mapping=mapping_config
+            mapping=mapping_config,
+            excluded_skus=None
         )
+
+        if allowed_vlm_skus:
+            skus_list = [s for s in skus_list if s.sku_id in allowed_vlm_skus]
+            print(f"✅ [Micro] Lista filtrada a {len(skus_list)} SKUs.")
+
+        if not skus_list:
+            raise ValueError("No hay SKUs válidos para procesar en Micro después del filtro.")
 
         config = MicroSlottingConfig(
             cycle_days=cycle_days,

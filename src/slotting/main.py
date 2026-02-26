@@ -145,7 +145,7 @@ async def detectar_outliers_endpoint(
         }
         
         # Imprimir en los logs
-        logger.info(f"📤 [RESPONSE OUTLIERS]: {json.dumps(response_data, default=str)}")
+        print(f"📤 [RESPONSE OUTLIERS]: {json.dumps(response_data, default=str)}")
         
         return response_data
     
@@ -243,7 +243,7 @@ async def ejecutar_macro(
         }
         
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
-        logger.info(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
+        print(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
 
         response_data = {
             "status": "success",
@@ -252,7 +252,7 @@ async def ejecutar_macro(
             "vlm_skus": vlm_skus_details
         }
         
-        logger.info(f"📤 [RESPONSE MACRO]: {json.dumps(response_data, default=str)}")
+        print(f"📤 [RESPONSE MACRO]: {json.dumps(response_data, default=str)}")
         
         return response_data
     
@@ -379,7 +379,7 @@ async def ejecutar_micro(
         }
 
         exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)
-        logger.info(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
+        print(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
 
         response_data = {
             "status": "success",
@@ -388,7 +388,7 @@ async def ejecutar_micro(
             "best_trays": trays_export
         }
         
-        logger.info(f"📤 [RESPONSE MICRO]: {json.dumps(response_data, default=str)}")
+        print(f"📤 [RESPONSE MICRO]: {json.dumps(response_data, default=str)}")
         
         return response_data
 

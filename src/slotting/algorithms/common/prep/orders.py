@@ -16,10 +16,12 @@ def load_orders_from_pedidos(
     path: str | Path,
     allowed_skus: set[str] | None = None,
     mapping: dict = None, 
-    xls: pd.ExcelFile = None # <-- RECIBE EL EXCEL YA ABIERTO
+    xls: pd.ExcelFile = None, # <-- RECIBE EL EXCEL YA ABIERTO
+    excluded_orders: set[str] = None # <-- NUEVO
 ) -> tuple[list[Order], dict[str, int], dict[str, float], OrderLoadStats]:
     
     if mapping is None: mapping = {}
+    if excluded_orders is None: excluded_orders = set()
     path_obj = Path(path)
     stats = OrderLoadStats()
     
@@ -91,6 +93,9 @@ def load_orders_from_pedidos(
     for _, row in df.iterrows():
         stats.total_rows += 1
         o_id, s_id = str(row[id_col]).strip(), str(row[sku_col]).strip()
+
+        if o_id in excluded_orders:
+            continue
 
         if not o_id or o_id.lower() in ["nan", "none"] or not s_id or s_id.lower() in ["nan", "none"]:
             stats.skipped_missing_fields += 1

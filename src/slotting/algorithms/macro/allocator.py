@@ -21,104 +21,68 @@ def run_macro_slotting(
     config: MacroSlottingConfig
 ) -> list[MacroResult]:
     
-    # --- Paso 1: Clasificación ABC (Basada en ROTACIÓN / LÍNEAS) ---
-    # Corrección: Usamos 'rot' (frecuencia de pedidos) en lugar de unidades vendidas.
-    # El objetivo es priorizar en VLM los artículos que generan más movimientos (líneas).
-    
-    # Ordenamos por rotación descendente (líneas/día o líneas totales según periodo)
+    # 1. ABC (igual que antes)
     skus_by_rot = sorted(skus, key=lambda s: s.rot, reverse=True)
-    
-    # Calculamos el total de líneas (esfuerzo total de picking)
     total_system_rot = sum(s.rot for s in skus)
-    
     sku_abc_map = {}
     accumulated_rot = 0.0
     limit_a, limit_b = config.abc_thresholds
     
     for sku in skus_by_rot:
         accumulated_rot += sku.rot
-        # Evitamos división por cero si no hay rotación en todo el sistema
         pct = accumulated_rot / total_system_rot if total_system_rot > 0 else 1.0
-        
-        if pct <= limit_a:
-            abc = "A"
-        elif pct <= limit_b:
-            abc = "B"
-        else:
-            abc = "C"
-        sku_abc_map[sku.sku_id] = abc
+        sku_abc_map[sku.sku_id] = "A" if pct <= limit_a else ("B" if pct <= limit_b else "C")
 
-    # --- Paso 2: Preparación de Buckets para Asignación ---
-    # Aunque ya están ordenados por rotación, los agrupamos explícitamente por ABC
-    # para respetar la jerarquía estricta: Primero llenamos con A, luego B, luego C.
-    
+    # 2. Cola de prioridad
     buckets = {"A": [], "B": [], "C": []}
-    for sku in skus:
-        abc = sku_abc_map[sku.sku_id]
-        buckets[abc].append(sku)
-        
-    # Dentro de cada clase A/B/C, nos aseguramos que estén ordenados por el más rotante al menos rotante.
-    for key in buckets:
-        buckets[key].sort(key=lambda s: s.rot, reverse=True)
-        
-    # Cola de prioridad final: Todos los A (ordenados), seguidos de los B, etc.
+    for sku in skus: buckets[sku_abc_map[sku.sku_id]].append(sku)
+    for key in buckets: buckets[key].sort(key=lambda s: s.rot, reverse=True)
     priority_queue = buckets["A"] + buckets["B"] + buckets["C"]
 
-    # --- Paso 3 y 4: Asignación con Hard Blocks y Capacidad Volumétrica ---
+    # 3. Preparar los Storage Types (Ordenados por prioridad 1, 2, 3...)
+    sorted_storages = sorted(config.storage_types, key=lambda x: int(x.get("priority", 99)))
     
-    vlm_capacity_limit = config.vlm_total_usable_volume * config.vlm_occupancy_target
-    current_vlm_usage = 0.0
+    usage = {st["name"]: 0.0 for st in sorted_storages}
+    limits = {st["name"]: float(st.get("capacity", float('inf'))) * float(st.get("occupancy", 1.0)) for st in sorted_storages}
     
     results: list[MacroResult] = []
 
+    # 4. Asignación Dinámica
     for sku in priority_queue:
         abc = sku_abc_map[sku.sku_id]
-        
-        # El volumen físico que ocupa el stock sigue dependiendo de las UNIDADES (cycle_units),
-        # no de la rotación. Un producto A puede ocupar mucho espacio si tiene stock alto.
         cycle_vol = (sku.cycle_units or 0.0) * sku.volume
         
-        # Regla 1: Hard Block - Sensibles (A JAULA)
-        if sku.is_sensitive:
-            results.append(MacroResult(
-                sku_id=sku.sku_id,
-                storage_type="JAULA",
-                abc_class=abc,
-                cycle_volume=cycle_vol,
-                reason="Hard Block: Sensitive"
-            ))
-            continue
+        assigned = False
+        
+        for st in sorted_storages:
+            name = st["name"]
+            max_vol = float(st.get("max_volume", float('inf')))
+            max_weight = float(st.get("max_weight", float('inf')))
             
-        # Regla 2: Hard Block - No apto VLM (A RACK)
-        if not sku.vlm_eligible:
+            # Verificamos si el SKU rompe las reglas físicas de esta ubicación
+            if sku.volume > max_vol or sku.weight > max_weight:
+                continue
+                
+            # Verificamos si queda espacio en esta ubicación
+            if usage[name] + cycle_vol <= limits[name]:
+                usage[name] += cycle_vol
+                results.append(MacroResult(
+                    sku_id=sku.sku_id,
+                    storage_type=name,
+                    abc_class=abc,
+                    cycle_volume=cycle_vol,
+                    reason=f"Fits constraints of {name}"
+                ))
+                assigned = True
+                break
+                
+        if not assigned:
             results.append(MacroResult(
                 sku_id=sku.sku_id,
-                storage_type="RACK",
+                storage_type="UNASSIGNED",
                 abc_class=abc,
                 cycle_volume=cycle_vol,
-                reason="Hard Block: Not VLM Eligible"
-            ))
-            continue
-            
-        # Regla 3: Capacidad VLM (Greedy)
-        # Intentamos meterlo en VLM si entra el volumen de su stock
-        if current_vlm_usage + cycle_vol <= vlm_capacity_limit:
-            current_vlm_usage += cycle_vol
-            results.append(MacroResult(
-                sku_id=sku.sku_id,
-                storage_type="VLM",
-                abc_class=abc,
-                cycle_volume=cycle_vol,
-                reason="Capacity Fit"
-            ))
-        else:
-            # Si se llenó el VLM, el resto va a RACK (Overflow)
-            results.append(MacroResult(
-                sku_id=sku.sku_id,
-                storage_type="RACK",
-                abc_class=abc,
-                cycle_volume=cycle_vol,
-                reason="VLM Capacity Overflow"
+                reason="No storage type matched constraints or capacity"
             ))
             
     return results

@@ -13,6 +13,8 @@ def load_slotting_inputs_with_stats(
     period_days: float = 180.0,
     include_zero_rot: bool = False,
     mapping: dict = None,
+    excluded_skus: set[str] = None, # <-- NUEVO
+    excluded_orders: set[str] = None, # <-- NUEVO
 ) -> tuple[list[SKU], list[Order], PrepStats]:
     """Carga genérica de datos leyendo desde un solo archivo Excel y controlando memoria."""
     if mapping is None:
@@ -30,6 +32,8 @@ def load_slotting_inputs_with_stats(
     # 2. Cargar Maestro
     sku_records = load_sku_records_from_codes(file_path, mapping=mapping, xls=xls) 
     stats.total_skus_master = len(sku_records)
+
+    allowed_skus = set(sku_records.keys()) - excluded_skus
     
     # Limpiar RAM intermedia
     gc.collect()
@@ -40,7 +44,8 @@ def load_slotting_inputs_with_stats(
         file_path, 
         allowed_skus=allowed_skus,
         mapping=mapping,
-        xls=xls # Le pasamos el mismo Excel abierto
+        xls=xls,
+        excluded_orders=excluded_orders # <-- NUEVO
     )
     stats.order_stats = order_stats
 

@@ -157,12 +157,16 @@ async def detectar_outliers_endpoint(
 
 @app.post("/api/v1/macro")
 async def ejecutar_macro(
-    file: UploadFile = File(...), # <-- 1. UN SOLO ARCHIVO
+    file: UploadFile = File(...), 
     cycle_days: float = Form(15.0),
-    vlm_volume: float = Form(60.0),
-    vlm_occupancy: float = Form(0.85),
     
-    # --- 2. MAPEO DINÁMICO ---
+    # --- NUEVOS CAMPOS ---
+    exclude_outliers: bool = Form(False),
+    excluded_skus: str = Form("[]"),
+    excluded_orders: str = Form("[]"),
+    storage_types: str = Form("[]"), # Array JSON de almacenamientos
+    
+    # --- Mapeo Dinámico ---
     sheet_maestro: str = Form("Base Cód."),
     col_sku_maestro: str = Form("Material"),
     col_volumen: str = Form("M3/UMB"),
@@ -170,90 +174,87 @@ async def ejecutar_macro(
     col_alto: str = Form("Alto"),
     col_ancho: str = Form("Ancho"),
     col_largo: str = Form("Largo"),
-    
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
     col_pedido_cant: str = Form("Cantidad unidades"),
-    # -------------------------
     
     token: str = Depends(verificar_token),
     db: Session = Depends(get_db)
 ):
-    """Ejecuta el Macro Slotting (Asignación a VLM)."""
     path_file = guardar_temp(file)
     CURRENT_USER_ID = "frontend_user_mock_123"
 
     try:
         mapping_config = {
-            "sheet_maestro": sheet_maestro,
-            "col_sku_maestro": col_sku_maestro,
-            "col_volumen": col_volumen,
-            "col_peso": col_peso,
-            "col_alto": col_alto,
-            "col_ancho": col_ancho,
-            "col_largo": col_largo,
-            "sheet_pedidos": sheet_pedidos,
-            "col_pedido_id": col_pedido_id,
-            "col_pedido_sku": col_pedido_sku,
-            "col_pedido_cant": col_pedido_cant
+            "sheet_maestro": sheet_maestro, "col_sku_maestro": col_sku_maestro,
+            "col_volumen": col_volumen, "col_peso": col_peso,
+            "col_alto": col_alto, "col_ancho": col_ancho, "col_largo": col_largo,
+            "sheet_pedidos": sheet_pedidos, "col_pedido_id": col_pedido_id,
+            "col_pedido_sku": col_pedido_sku, "col_pedido_cant": col_pedido_cant
         }
 
-        # 3. LLAMADA ACTUALIZADA AL LOADER
+        # Parsear exclusiones
+        ex_skus_set, ex_orders_set = set(), set()
+        if exclude_outliers:
+            ex_skus_set = set(json.loads(excluded_skus))
+            ex_orders_set = set(json.loads(excluded_orders))
+            
+        # Parsear Storage Types
+        st_list = json.loads(storage_types)
+        if not st_list: # Fallback de seguridad si mandan vacío
+            st_list = [{"name": "VLM", "priority": 1, "max_volume": float('inf'), "max_weight": float('inf'), "capacity": 60.0, "occupancy": 0.85}]
+
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,
             cycle_days=cycle_days,
             period_days=180.0,
             include_zero_rot=True,
-            mapping=mapping_config
+            mapping=mapping_config,
+            excluded_skus=ex_skus_set,     # Pasamos los SKUs malos
+            excluded_orders=ex_orders_set  # Pasamos los pedidos malos
         )
 
-        config = MacroSlottingConfig(
-            vlm_total_usable_volume=vlm_volume,
-            vlm_occupancy_target=vlm_occupancy,
-            abc_thresholds=(0.80, 0.95)
-        )
+        config = MacroSlottingConfig(storage_types=st_list, abc_thresholds=(0.80, 0.95))
         results = run_macro_slotting(skus_list, config)
         
-        vlm_results = [r for r in results if r.storage_type == "VLM"]
-        rack_results = [r for r in results if r.storage_type == "RACK"]
-        vlm_assigned_volume = sum(getattr(r, 'cycle_volume', 0) for r in vlm_results)
-        target_vol = vlm_volume * vlm_occupancy
-        fill_pct = (vlm_assigned_volume / target_vol) * 100 if target_vol > 0 else 0
-
-        vlm_skus_details = [{
-            "sku_id": r.sku_id,
-            "vol_cycle": getattr(r, 'cycle_volume', 0.0),
-            "abc_class": getattr(r, 'abc_class', 'N/A')
-        } for r in vlm_results]
-
+        # --- ARMADO DINÁMICO DE KPIS ---
         kpi_dict = {
             "total_skus": len(results),
-            "vlm_skus_count": len(vlm_results),
-            "rack_skus_count": len(rack_results),
-            "vlm_volume_used": round(vlm_assigned_volume, 2),
-            "vlm_volume_target": round(target_vol, 2),
-            "vlm_fill_percentage": round(fill_pct, 1)
-        }
-
-        params_dict = {
-            "cycle_days": cycle_days,
-            "vlm_volume": vlm_volume,
-            "vlm_occupancy": vlm_occupancy
+            "allocations": {}
         }
         
+        vlm_skus_details = []
+        for st in st_list:
+            st_name = st["name"]
+            st_results = [r for r in results if r.storage_type == st_name]
+            st_vol_used = sum(getattr(r, 'cycle_volume', 0) for r in st_results)
+            st_target = float(st.get("capacity", 0)) * float(st.get("occupancy", 1))
+            fill_pct = (st_vol_used / st_target) * 100 if st_target > 0 else 0
+            
+            kpi_dict["allocations"][st_name] = {
+                "skus_count": len(st_results),
+                "volume_used": round(st_vol_used, 2),
+                "volume_target": round(st_target, 2),
+                "fill_percentage": round(fill_pct, 1)
+            }
+            
+            vlm_skus_details.extend([{
+                "sku_id": r.sku_id, "storage_type": r.storage_type,
+                "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A')
+            } for r in st_results])
+            
+        unassigned = [r for r in results if r.storage_type == "UNASSIGNED"]
+        kpi_dict["unassigned_count"] = len(unassigned)
+
+        params_dict = {"cycle_days": cycle_days, "storage_types": st_list}
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
-        print(f"Ejecución Macro guardada exitosamente en DB con ID: {exec_id}")
 
         response_data = {
-            "status": "success",
-            "execution_id": str(exec_id), # Le devolvemos al frontend el ID por si lo necesita
-            "kpi": kpi_dict,
-            "vlm_skus": vlm_skus_details
+            "status": "success", "execution_id": str(exec_id), 
+            "kpi": kpi_dict, "macro_skus": vlm_skus_details
         }
-        
         print(f"📤 [RESPONSE MACRO]: {json.dumps(response_data, default=str)}")
-        
         return response_data
     
     except Exception as e:

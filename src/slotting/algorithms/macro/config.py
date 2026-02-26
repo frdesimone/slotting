@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class MacroSlottingConfig:
@@ -11,4 +11,5 @@ class MacroSlottingConfig:
     
     # Umbrales acumulados para A y B (C es el resto)
     # (0.80, 0.95) significa: A=0-80%, B=80-95%, C=95-100% del volumen de ventas
+    storage_types: list[dict] = field(default_factory=list)
     abc_thresholds: tuple[float, float] = (0.80, 0.95)

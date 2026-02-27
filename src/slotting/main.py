@@ -270,13 +270,15 @@ async def ejecutar_macro(
 
         config = MacroSlottingConfig(storage_types=st_list, abc_thresholds=(0.80, 0.95))
         results = run_macro_slotting(skus_list, config)
-        
+
+        sku_by_id = {s.sku_id: s for s in skus_list}
+
         # --- ARMADO DINÁMICO DE KPIS ---
         kpi_dict = {
             "total_skus": len(results),
             "allocations": {}
         }
-        
+
         vlm_skus_details = []
         for st in st_list:
             st_name = st["name"]
@@ -297,9 +299,10 @@ async def ejecutar_macro(
                 "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
                 "description": getattr(r, 'description', '') or '',
                 "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
-                "category": getattr(r, 'category', '') or ''
+                "category": getattr(r, 'category', '') or '',
+                "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
             } for r in st_results])
-        
+
         unassigned = [r for r in results if r.storage_type == "UNASSIGNED"]
         kpi_dict["unassigned_count"] = len(unassigned)
         vlm_skus_details.extend([{
@@ -307,7 +310,8 @@ async def ejecutar_macro(
             "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
             "description": getattr(r, 'description', '') or '',
             "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
-            "category": getattr(r, 'category', '') or ''
+            "category": getattr(r, 'category', '') or '',
+            "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
         } for r in unassigned])
 
         params_dict = {"storage_types": st_list}

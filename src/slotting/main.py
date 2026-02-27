@@ -239,9 +239,23 @@ async def ejecutar_macro(
             
         # Parsear Storage Types (cycle_days ahora va dentro de cada storage type)
         st_list = json.loads(storage_types)
-        if not st_list: # Fallback de seguridad si mandan vacío
+        if not st_list:  # Fallback de seguridad si mandan vacío
             st_list = [{"name": "VLM", "priority": 1, "cycle_days": 15.0, "max_volume": float('inf'), "max_weight": float('inf'), "capacity": 60.0, "occupancy": 0.85, "max_cycle_volume_limit": float('inf'), "allowed_categories": []}]
-        
+
+        # Normalizar allowed_categories: vacío = [] = "permitir todas"
+        def _normalize_allowed_categories(raw):
+            if raw is None or raw == "":
+                return []
+            if isinstance(raw, list):
+                return [c.strip() for c in raw if c and str(c).strip()]
+            if isinstance(raw, str):
+                return [c.strip() for c in raw.split(",") if c.strip()]
+            return []
+
+        for st in st_list:
+            if isinstance(st, dict):
+                st["allowed_categories"] = _normalize_allowed_categories(st.get("allowed_categories", ""))
+
         cycle_days_for_loader = float(st_list[0].get("cycle_days", 15.0)) if st_list else 15.0
 
         skus_list, orders, stats = load_slotting_inputs_with_stats(

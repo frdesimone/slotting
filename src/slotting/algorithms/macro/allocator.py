@@ -72,21 +72,18 @@ def run_macro_slotting(
                 allowed_cats = [c.strip() for c in allowed_cats.split(",") if c.strip()]
             elif not isinstance(allowed_cats, list):
                 allowed_cats = []
-            
+
             # Volumen de ciclo: rotación histórica en base a 180 días
             rot_diaria = sku_rot / 180.0
             cycle_vol = rot_diaria * cycle_days * sku_vol
-            
+
             # Reglas de rechazo: límite de volumen de ciclo
             if cycle_vol > max_cycle_vol_limit:
                 continue
             
-            # Reglas de rechazo: categorías permitidas (si allowed_categories no está vacío)
-            if allowed_cats:
-                sku_cat_norm = sku_cat.strip().lower()
-                allowed_norm = [c.strip().lower() for c in allowed_cats]
-                if sku_cat_norm not in allowed_norm:
-                    continue
+            # Reglas de rechazo: categorías permitidas (vacío = permitir todas; solo rechazar si hay filtro Y el SKU no cumple)
+            if allowed_cats and sku_cat.strip().lower() not in [c.strip().lower() for c in allowed_cats]:
+                continue
             
             # Reglas físicas: volumen y peso por SKU
             if sku_vol > max_vol or sku.weight > max_weight:

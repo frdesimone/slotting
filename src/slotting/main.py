@@ -147,14 +147,35 @@ async def detectar_outliers_endpoint(
             logger.warning(f"outliers_config inválido, usando defaults: {outliers_config}")
 
         report = detect_outliers(skus_list, orders, config=config_dict)
-        
-        # Formatear respuesta JSON
+        sku_by_id = {s.sku_id: s for s in skus_list}
+
+        def sku_desc(sku) -> str:
+            return (getattr(sku, "description", None) or "") if sku else ""
+
+        # Formatear respuesta JSON: objetos con sku_id/order_id, description y value
         response_data = {
             "status": "success",
-            "heavy_skus": [{"id": s.sku_id, "weight": s.weight} for s in report.heavy_skus],
-            "bulky_skus": [{"id": s.sku_id, "volume": s.volume} for s in report.bulky_skus],
-            "massive_orders": [{"id": o.order_id, "lines": len(o.sku_ids)} for o in report.massive_orders],
-            "ubiquitous_skus": [{"id": s_id, "count": count, "pct": pct} for s_id, count, pct in report.ubiquitous_skus]
+            "heavy_skus": [
+                {"sku_id": s.sku_id, "description": sku_desc(s), "value": getattr(s, "weight", 0) or 0}
+                for s in report.heavy_skus
+            ],
+            "bulky_skus": [
+                {"sku_id": s.sku_id, "description": sku_desc(s), "value": getattr(s, "volume", 0) or 0}
+                for s in report.bulky_skus
+            ],
+            "massive_orders": [
+                {"order_id": o.order_id, "description": f"Pedido con {len(o.sku_ids)} líneas", "value": len(o.sku_ids)}
+                for o in report.massive_orders
+            ],
+            "ubiquitous_skus": [
+                {
+                    "sku_id": s_id,
+                    "description": sku_desc(sku_by_id.get(s_id)),
+                    "value": pct,
+                    "count": count,
+                }
+                for s_id, count, pct in report.ubiquitous_skus
+            ],
         }
         
         # Imprimir en los logs

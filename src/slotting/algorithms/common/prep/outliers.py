@@ -10,9 +10,9 @@ from typing import List, Tuple, Dict, Any
 from slotting.algorithms.common.prep.codes import SkuRecord
 from slotting.models.order import Order
 
-# Valores por defecto cuando no hay config
-_DEFAULT_HEAVY = {"enabled": True, "weight_min": 25.0, "weight_max": 9999.0}
-_DEFAULT_BULKY = {"enabled": True, "volume_min": 0.05, "volume_max": 100.0}
+# Valores por defecto: rango NORMAL (fuera = outlier)
+_DEFAULT_HEAVY = {"enabled": True, "weight_min": 0.0, "weight_max": 25.0}
+_DEFAULT_BULKY = {"enabled": True, "volume_min": 0.0, "volume_max": 0.05}
 _DEFAULT_MASSIVE = {"enabled": True, "lines_threshold": 50}
 _DEFAULT_UBIQUITOUS = {"enabled": True, "frequency_threshold": 0.15}
 
@@ -41,8 +41,12 @@ def _get_config(config: Dict[str, Any], key: str, defaults: dict) -> dict:
 
 def detect_outliers(skus: List[SkuRecord], orders: List[Order], config: Dict[str, Any] | None = None) -> OutlierReport:
     """
-    Escanea la lista de SKUs y Pedidos buscando valores atípicos basados en heurísticas de almacén.
-    Los umbrales se leen de `config` (JSON del frontend). Si una regla está deshabilitada, retorna lista vacía.
+    Escanea la lista de SKUs y Pedidos buscando valores atípicos (outliers).
+    Los parámetros definen el RANGO NORMAL: lo que queda fuera es anómalo.
+    - Peso: outlier si weight < min_weight O weight > max_weight
+    - Volumen: outlier si volume < min_volume O volume > max_volume
+    - Pedidos B2B: outlier si líneas > tope_normal
+    - Omnipresentes: outlier si frecuencia >= tope_normal
     """
     config = config or {}
     report = OutlierReport()
@@ -52,7 +56,7 @@ def detect_outliers(skus: List[SkuRecord], orders: List[Order], config: Dict[str
     massive_cfg = _get_config(config, "massive", _DEFAULT_MASSIVE)
     ubiquitous_cfg = _get_config(config, "ubiquitous", _DEFAULT_UBIQUITOUS)
     
-    # --- ANÁLISIS DE SKUs (Física) ---
+    # --- ANÁLISIS DE SKUs (Física): fuera del rango normal = outlier ---
     for sku in skus:
         vol = getattr(sku, 'volume', 0.0) or 0.0
         weight = getattr(sku, 'weight', 0.0) or 0.0
@@ -61,15 +65,15 @@ def detect_outliers(skus: List[SkuRecord], orders: List[Order], config: Dict[str
             report.zero_metric_skus.append(sku)
         
         if heavy_cfg.get("enabled", True):
-            w_min = float(heavy_cfg.get("weight_min", 25.0))
-            w_max = float(heavy_cfg.get("weight_max", 9999.0))
-            if w_min < weight <= w_max:
+            w_min = float(heavy_cfg.get("weight_min", 0.0))
+            w_max = float(heavy_cfg.get("weight_max", 25.0))
+            if weight < w_min or weight > w_max:
                 report.heavy_skus.append(sku)
         
         if bulky_cfg.get("enabled", True):
-            v_min = float(bulky_cfg.get("volume_min", 0.05))
-            v_max = float(bulky_cfg.get("volume_max", 100.0))
-            if v_min < vol <= v_max:
+            v_min = float(bulky_cfg.get("volume_min", 0.0))
+            v_max = float(bulky_cfg.get("volume_max", 0.05))
+            if vol < v_min or vol > v_max:
                 report.bulky_skus.append(sku)
 
     # --- ANÁLISIS DE PEDIDOS (Operativa) ---

@@ -133,6 +133,9 @@ def _build_skus(
                 units_sold_total=total_units_sold,
                 is_sensitive=record.is_sensitive,
                 vlm_eligible=record.vlm_eligible,
+                description=record.description or "",
+                boxes_per_m3=record.boxes_per_m3 or 0.0,
+                category=record.category or "",
                 # -------------------------------
             )
         )

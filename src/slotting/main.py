@@ -1,4 +1,4 @@
-﻿import os
+import os
 import shutil
 import ipaddress
 import logging
@@ -89,6 +89,7 @@ def read_root():
 async def detectar_outliers_endpoint(
     file: UploadFile = File(...), # <-- AHORA ES UN SOLO ARCHIVO
     cycle_days: float = Form(15.0),
+    outliers_config: str = Form("{}"),
     
     # --- Mapeo Dinámico ---
     sheet_maestro: str = Form("Base Cód."),
@@ -98,7 +99,9 @@ async def detectar_outliers_endpoint(
     col_alto: str = Form("Alto"),
     col_ancho: str = Form("Ancho"),
     col_largo: str = Form("Largo"),
-    
+    col_desc: str = Form("Descripción"),
+    col_cajas_m3: str = Form("Cajas/M3"),
+    col_categoria: str = Form("Categoría"),
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
@@ -118,6 +121,9 @@ async def detectar_outliers_endpoint(
             "col_alto": col_alto,
             "col_ancho": col_ancho,
             "col_largo": col_largo,
+            "col_desc": col_desc,
+            "col_cajas_m3": col_cajas_m3,
+            "col_categoria": col_categoria,
             "sheet_pedidos": sheet_pedidos,
             "col_pedido_id": col_pedido_id,
             "col_pedido_sku": col_pedido_sku,
@@ -133,7 +139,14 @@ async def detectar_outliers_endpoint(
         )
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
-        report = detect_outliers(skus_list, orders)
+        config_dict = {}
+        try:
+            if outliers_config and outliers_config.strip():
+                config_dict = json.loads(outliers_config)
+        except json.JSONDecodeError:
+            logger.warning(f"outliers_config inválido, usando defaults: {outliers_config}")
+
+        report = detect_outliers(skus_list, orders, config=config_dict)
         
         # Formatear respuesta JSON
         response_data = {
@@ -158,7 +171,6 @@ async def detectar_outliers_endpoint(
 @app.post("/api/v1/macro")
 async def ejecutar_macro(
     file: UploadFile = File(...), 
-    cycle_days: float = Form(15.0),
     
     # --- NUEVOS CAMPOS ---
     exclude_outliers: bool = Form(False),
@@ -174,6 +186,9 @@ async def ejecutar_macro(
     col_alto: str = Form("Alto"),
     col_ancho: str = Form("Ancho"),
     col_largo: str = Form("Largo"),
+    col_desc: str = Form("Descripción"),
+    col_cajas_m3: str = Form("Cajas/M3"),
+    col_categoria: str = Form("Categoría"),
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
@@ -190,6 +205,7 @@ async def ejecutar_macro(
             "sheet_maestro": sheet_maestro, "col_sku_maestro": col_sku_maestro,
             "col_volumen": col_volumen, "col_peso": col_peso,
             "col_alto": col_alto, "col_ancho": col_ancho, "col_largo": col_largo,
+            "col_desc": col_desc, "col_cajas_m3": col_cajas_m3, "col_categoria": col_categoria,
             "sheet_pedidos": sheet_pedidos, "col_pedido_id": col_pedido_id,
             "col_pedido_sku": col_pedido_sku, "col_pedido_cant": col_pedido_cant
         }
@@ -200,14 +216,16 @@ async def ejecutar_macro(
             ex_skus_set = set(json.loads(excluded_skus))
             ex_orders_set = set(json.loads(excluded_orders))
             
-        # Parsear Storage Types
+        # Parsear Storage Types (cycle_days ahora va dentro de cada storage type)
         st_list = json.loads(storage_types)
         if not st_list: # Fallback de seguridad si mandan vacío
-            st_list = [{"name": "VLM", "priority": 1, "max_volume": float('inf'), "max_weight": float('inf'), "capacity": 60.0, "occupancy": 0.85}]
+            st_list = [{"name": "VLM", "priority": 1, "cycle_days": 15.0, "max_volume": float('inf'), "max_weight": float('inf'), "capacity": 60.0, "occupancy": 0.85, "max_cycle_volume_limit": float('inf'), "allowed_categories": []}]
+        
+        cycle_days_for_loader = float(st_list[0].get("cycle_days", 15.0)) if st_list else 15.0
 
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,
-            cycle_days=cycle_days,
+            cycle_days=cycle_days_for_loader,
             period_days=180.0,
             include_zero_rot=True,
             mapping=mapping_config,
@@ -241,13 +259,23 @@ async def ejecutar_macro(
             
             vlm_skus_details.extend([{
                 "sku_id": r.sku_id, "storage_type": r.storage_type,
-                "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A')
+                "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
+                "description": getattr(r, 'description', '') or '',
+                "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
+                "category": getattr(r, 'category', '') or ''
             } for r in st_results])
-            
+        
         unassigned = [r for r in results if r.storage_type == "UNASSIGNED"]
         kpi_dict["unassigned_count"] = len(unassigned)
+        vlm_skus_details.extend([{
+            "sku_id": r.sku_id, "storage_type": r.storage_type,
+            "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
+            "description": getattr(r, 'description', '') or '',
+            "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
+            "category": getattr(r, 'category', '') or ''
+        } for r in unassigned])
 
-        params_dict = {"cycle_days": cycle_days, "storage_types": st_list}
+        params_dict = {"storage_types": st_list}
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
 
         response_data = {
@@ -283,7 +311,9 @@ async def ejecutar_micro(
     col_alto: str = Form("Alto"),
     col_ancho: str = Form("Ancho"),
     col_largo: str = Form("Largo"),
-    
+    col_desc: str = Form("Descripción"),
+    col_cajas_m3: str = Form("Cajas/M3"),
+    col_categoria: str = Form("Categoría"),
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
@@ -308,6 +338,9 @@ async def ejecutar_micro(
             "col_alto": col_alto,
             "col_ancho": col_ancho,
             "col_largo": col_largo,
+            "col_desc": col_desc,
+            "col_cajas_m3": col_cajas_m3,
+            "col_categoria": col_categoria,
             "sheet_pedidos": sheet_pedidos,
             "col_pedido_id": col_pedido_id,
             "col_pedido_sku": col_pedido_sku,

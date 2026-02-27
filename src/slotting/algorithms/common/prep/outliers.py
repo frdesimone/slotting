@@ -4,11 +4,18 @@ Ayuda a identificar pedidos o SKUs que pueden distorsionar los cálculos de afin
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 
 # Corregimos el import para usar SkuRecord desde codes.py
 from slotting.algorithms.common.prep.codes import SkuRecord
 from slotting.models.order import Order
+
+# Valores por defecto cuando no hay config
+_DEFAULT_HEAVY = {"enabled": True, "weight_min": 25.0, "weight_max": 9999.0}
+_DEFAULT_BULKY = {"enabled": True, "volume_min": 0.05, "volume_max": 100.0}
+_DEFAULT_MASSIVE = {"enabled": True, "lines_threshold": 50}
+_DEFAULT_UBIQUITOUS = {"enabled": True, "frequency_threshold": 0.15}
+
 
 @dataclass
 class OutlierReport:
@@ -23,17 +30,27 @@ class OutlierReport:
     # SKUs que rompen la afinidad (Aparecen en demasiados pedidos)
     ubiquitous_skus: List[Tuple[str, int, float]] = field(default_factory=list) # (sku_id, count, percentage)
 
-def detect_outliers(skus: List[SkuRecord], orders: List[Order]) -> OutlierReport:
+
+def _get_config(config: Dict[str, Any], key: str, defaults: dict) -> dict:
+    """Extrae y fusiona la config de una categoría con sus defaults."""
+    raw = config.get(key, {})
+    if not isinstance(raw, dict):
+        return defaults
+    return {**defaults, **{k: v for k, v in raw.items() if k in defaults}}
+
+
+def detect_outliers(skus: List[SkuRecord], orders: List[Order], config: Dict[str, Any] | None = None) -> OutlierReport:
     """
     Escanea la lista de SKUs y Pedidos buscando valores atípicos basados en heurísticas de almacén.
+    Los umbrales se leen de `config` (JSON del frontend). Si una regla está deshabilitada, retorna lista vacía.
     """
+    config = config or {}
     report = OutlierReport()
     
-    # 1. Configuración de Umbrales (Ajustables según el cliente)
-    MAX_WEIGHT_KG = 25.0      # Más de 25kg por unidad es atípico/peligroso para picking manual
-    MAX_VOLUME_M3 = 0.05      # 50 litros (ej. caja de 40x40x30cm) es enorme para un VLM
-    MAX_ORDER_LINES = 50      # Pedidos con > 50 líneas distintas suelen ser mayoristas/reposición
-    UBIQUITOUS_PCT = 0.15     # Si un SKU está en > 15% de todos los pedidos, suele ser packaging
+    heavy_cfg = _get_config(config, "heavy", _DEFAULT_HEAVY)
+    bulky_cfg = _get_config(config, "bulky", _DEFAULT_BULKY)
+    massive_cfg = _get_config(config, "massive", _DEFAULT_MASSIVE)
+    ubiquitous_cfg = _get_config(config, "ubiquitous", _DEFAULT_UBIQUITOUS)
     
     # --- ANÁLISIS DE SKUs (Física) ---
     for sku in skus:
@@ -42,34 +59,42 @@ def detect_outliers(skus: List[SkuRecord], orders: List[Order]) -> OutlierReport
         
         if vol <= 0 or weight <= 0:
             report.zero_metric_skus.append(sku)
-        if weight > MAX_WEIGHT_KG:
-            report.heavy_skus.append(sku)
-        if vol > MAX_VOLUME_M3:
-            report.bulky_skus.append(sku)
+        
+        if heavy_cfg.get("enabled", True):
+            w_min = float(heavy_cfg.get("weight_min", 25.0))
+            w_max = float(heavy_cfg.get("weight_max", 9999.0))
+            if w_min < weight <= w_max:
+                report.heavy_skus.append(sku)
+        
+        if bulky_cfg.get("enabled", True):
+            v_min = float(bulky_cfg.get("volume_min", 0.05))
+            v_max = float(bulky_cfg.get("volume_max", 100.0))
+            if v_min < vol <= v_max:
+                report.bulky_skus.append(sku)
 
     # --- ANÁLISIS DE PEDIDOS (Operativa) ---
     sku_appearances: Dict[str, int] = {}
     
     for order in orders:
-        # CORRECCIÓN AQUÍ: usamos order.sku_ids en lugar de order.lines
         lines_count = len(order.sku_ids)
-        if lines_count > MAX_ORDER_LINES:
-            report.massive_orders.append(order)
+        if massive_cfg.get("enabled", True):
+            threshold = int(massive_cfg.get("lines_threshold", 50))
+            if lines_count > threshold:
+                report.massive_orders.append(order)
             
-        # Contar apariciones de SKU para afinidad
         for sku_id in order.sku_ids:
             sku_appearances[sku_id] = sku_appearances.get(sku_id, 0) + 1
 
     # --- ANÁLISIS DE AFINIDAD (Omnipresencia) ---
-    total_orders = len(orders)
-    if total_orders > 0:
-        for sku_id, count in sku_appearances.items():
-            pct = count / total_orders
-            if pct >= UBIQUITOUS_PCT:
-                report.ubiquitous_skus.append((sku_id, count, pct))
-                
-    # Ordenar omnipresentes de mayor a menor
-    report.ubiquitous_skus.sort(key=lambda x: x[2], reverse=True)
+    if ubiquitous_cfg.get("enabled", True):
+        total_orders = len(orders)
+        threshold = float(ubiquitous_cfg.get("frequency_threshold", 0.15))
+        if total_orders > 0:
+            for sku_id, count in sku_appearances.items():
+                pct = count / total_orders
+                if pct >= threshold:
+                    report.ubiquitous_skus.append((sku_id, count, pct))
+        report.ubiquitous_skus.sort(key=lambda x: x[2], reverse=True)
     
     return report
 

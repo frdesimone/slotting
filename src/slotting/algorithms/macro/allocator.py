@@ -11,10 +11,13 @@ StorageType = Literal["VLM", "JAULA", "RACK"]
 @dataclass
 class MacroResult:
     sku_id: str
-    storage_type: StorageType
+    storage_type: str
     abc_class: str
     cycle_volume: float
     reason: str
+    description: str = ""
+    boxes_per_m3: float = 0.0
+    category: str = ""
 
 def run_macro_slotting(
     skus: list[SKU],
@@ -50,17 +53,43 @@ def run_macro_slotting(
     # 4. Asignación Dinámica
     for sku in priority_queue:
         abc = sku_abc_map[sku.sku_id]
-        cycle_vol = (sku.cycle_units or 0.0) * sku.volume
+        sku_rot = getattr(sku, 'rot', 0.0) or 0.0
+        sku_vol = getattr(sku, 'volume', 0.0) or 0.0
+        sku_desc = getattr(sku, 'description', '') or ''
+        sku_boxes = getattr(sku, 'boxes_per_m3', 0.0) or 0.0
+        sku_cat = getattr(sku, 'category', '') or ''
         
         assigned = False
         
         for st in sorted_storages:
             name = st["name"]
+            cycle_days = float(st.get("cycle_days", 15.0))
             max_vol = float(st.get("max_volume", float('inf')))
             max_weight = float(st.get("max_weight", float('inf')))
+            max_cycle_vol_limit = float(st.get("max_cycle_volume_limit", float('inf')))
+            allowed_cats = st.get("allowed_categories") or []
+            if isinstance(allowed_cats, str):
+                allowed_cats = [c.strip() for c in allowed_cats.split(",") if c.strip()]
+            elif not isinstance(allowed_cats, list):
+                allowed_cats = []
             
-            # Verificamos si el SKU rompe las reglas físicas de esta ubicación
-            if sku.volume > max_vol or sku.weight > max_weight:
+            # Volumen de ciclo: rotación histórica en base a 180 días
+            rot_diaria = sku_rot / 180.0
+            cycle_vol = rot_diaria * cycle_days * sku_vol
+            
+            # Reglas de rechazo: límite de volumen de ciclo
+            if cycle_vol > max_cycle_vol_limit:
+                continue
+            
+            # Reglas de rechazo: categorías permitidas (si allowed_categories no está vacío)
+            if allowed_cats:
+                sku_cat_norm = sku_cat.strip().lower()
+                allowed_norm = [c.strip().lower() for c in allowed_cats]
+                if sku_cat_norm not in allowed_norm:
+                    continue
+            
+            # Reglas físicas: volumen y peso por SKU
+            if sku_vol > max_vol or sku.weight > max_weight:
                 continue
                 
             # Verificamos si queda espacio en esta ubicación
@@ -71,18 +100,27 @@ def run_macro_slotting(
                     storage_type=name,
                     abc_class=abc,
                     cycle_volume=cycle_vol,
-                    reason=f"Fits constraints of {name}"
+                    reason=f"Fits constraints of {name}",
+                    description=sku_desc,
+                    boxes_per_m3=sku_boxes,
+                    category=sku_cat
                 ))
                 assigned = True
                 break
                 
         if not assigned:
+            rot_diaria = sku_rot / 180.0
+            cycle_days_default = float(sorted_storages[0].get("cycle_days", 15.0)) if sorted_storages else 15.0
+            cycle_vol = rot_diaria * cycle_days_default * sku_vol
             results.append(MacroResult(
                 sku_id=sku.sku_id,
                 storage_type="UNASSIGNED",
                 abc_class=abc,
                 cycle_volume=cycle_vol,
-                reason="No storage type matched constraints or capacity"
+                reason="No storage type matched constraints or capacity",
+                description=sku_desc,
+                boxes_per_m3=sku_boxes,
+                category=sku_cat
             ))
             
     return results

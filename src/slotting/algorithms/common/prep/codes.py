@@ -44,6 +44,9 @@ class SkuRecord:
     vlm_eligible: bool = True
     source_classification: str | None = None
     demand_kg_sem: float | None = None
+    description: str = ""
+    boxes_per_m3: float = 0.0
+    category: str = ""
 
 
 def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
@@ -76,6 +79,9 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     col_alto = clean_text(mapping.get("col_alto", "Alto"))
     col_ancho = clean_text(mapping.get("col_ancho", "Ancho"))
     col_largo = clean_text(mapping.get("col_largo", "Largo"))
+    col_desc = clean_text(mapping.get("col_desc", "Descripción"))
+    col_cajas_m3 = clean_text(mapping.get("col_cajas_m3", "Cajas/M3"))
+    col_categoria = clean_text(mapping.get("col_categoria", "Categoría"))
     
     should_close_xls = False
     if xls is None:
@@ -159,6 +165,9 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     # Detectamos las columnas exactas (con la limpieza de saltos de línea ya aplicada)
     col_v = next((c for c in df.columns if col_vol in c), None)
     col_p = next((c for c in df.columns if col_peso in c), None)
+    col_d = next((c for c in df.columns if col_desc in c), None)
+    col_cajas = next((c for c in df.columns if col_cajas_m3 in c), None)
+    col_cat = next((c for c in df.columns if col_categoria in c), None)
 
     # ALERTA EN LOGS SI FALLA
     if not col_v:
@@ -174,6 +183,10 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         except ValueError:
             return 0.0
 
+    def safe_str(val):
+        if pd.isna(val) or val is None: return ""
+        return str(val).replace('\n', ' ').replace('\r', '').strip()
+
     records = {}
     for _, row in df.iterrows():
         sku_id = str(row[id_col]).strip()
@@ -181,12 +194,16 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             
         vol_m3 = safe_float(row[col_v]) if col_v else 0.0
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
+        description = safe_str(row[col_d]) if col_d else ""
+        boxes_per_m3 = safe_float(row[col_cajas]) if col_cajas else 0.0
+        category = safe_str(row[col_cat]) if col_cat else ""
         
         h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
 
         records[sku_id] = SkuRecord(
             sku_id=sku_id, avg_units_per_line=None, volume=vol_m3, weight=weight_kg,
-            height=h, width=w, length=l, is_sensitive=False, vlm_eligible=True, source_classification="BREMEN_XLS"
+            height=h, width=w, length=l, is_sensitive=False, vlm_eligible=True, source_classification="BREMEN_XLS",
+            description=description, boxes_per_m3=boxes_per_m3, category=category
         )
         
     if should_close_xls: xls.close()

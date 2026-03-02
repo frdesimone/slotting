@@ -13,8 +13,8 @@ def load_slotting_inputs_with_stats(
     period_days: float = 180.0,
     include_zero_rot: bool = False,
     mapping: dict = None,
-    excluded_skus: set[str] = None, # <-- NUEVO
-    excluded_orders: set[str] = None, # <-- NUEVO
+    excluded_skus: set[str] = None, 
+    excluded_orders: set[str] = None, 
 ) -> tuple[list[SKU], list[Order], PrepStats]:
     """Carga genérica de datos leyendo desde un solo archivo Excel y controlando memoria."""
     if mapping is None:
@@ -36,19 +36,26 @@ def load_slotting_inputs_with_stats(
     sku_records = load_sku_records_from_codes(file_path, mapping=mapping, xls=xls) 
     stats.total_skus_master = len(sku_records)
 
+    print(f"🔍 [Loader] Maestro cargado con {len(sku_records)} SKUs.")
+    if sku_records:
+        sample_key = next(iter(sku_records.keys()))
+        print(f"🔍 [Loader] Ejemplo de ID en Maestro: '{sample_key}' (Tipo: {type(sample_key)})")
+
+    # Calculamos los permitidos restando los excluidos
     allowed_skus = set(sku_records.keys()) - excluded_skus
+    print(f"🔍 [Loader] Excluyendo {len(excluded_skus)} SKUs. Quedan {len(allowed_skus)} SKUs permitidos para cargar pedidos.")
     
     # Limpiar RAM intermedia
     gc.collect()
     
     # 3. Cargar Pedidos
-    allowed_skus = set(sku_records.keys())
+    # ELIMINAMOS EL BUG: Ya no sobreescribimos allowed_skus acá
     orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
         file_path, 
         allowed_skus=allowed_skus,
         mapping=mapping,
         xls=xls,
-        excluded_orders=excluded_orders # <-- NUEVO
+        excluded_orders=excluded_orders 
     )
     stats.order_stats = order_stats
 
@@ -70,6 +77,10 @@ def load_slotting_inputs_with_stats(
         stats=stats,
     )
     
+    print(f"🔍 [Loader] _build_skus generó {len(skus)} objetos SKU.")
+    if skus:
+        print(f"🔍 [Loader] Ejemplo de ID en objeto SKU: '{skus[0].sku_id}' (Tipo: {type(skus[0].sku_id)})")
+
     # 6. Filtrar órdenes
     filtered_orders = _filter_orders_by_skus(orders, skus, stats)
 

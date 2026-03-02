@@ -139,44 +139,35 @@ async def detectar_outliers_endpoint(
         )
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
-        config_dict = {}
+        rules_list = []
         try:
             if outliers_config and outliers_config.strip():
-                config_dict = json.loads(outliers_config)
+                parsed = json.loads(outliers_config)
+                rules_list = parsed if isinstance(parsed, list) else []
         except json.JSONDecodeError:
             logger.warning(f"outliers_config inválido, usando defaults: {outliers_config}")
 
-        report = detect_outliers(skus_list, orders, config=config_dict)
+        report = detect_outliers(skus_list, orders, rules=rules_list)
         sku_by_id = {s.sku_id: s for s in skus_list}
 
         def sku_desc(sku) -> str:
             return (getattr(sku, "description", None) or "") if sku else ""
 
-        # Formatear respuesta JSON: objetos con sku_id/order_id, description y value
-        response_data = {
-            "status": "success",
-            "heavy_skus": [
-                {"sku_id": s.sku_id, "description": sku_desc(s), "value": getattr(s, "weight", 0) or 0}
-                for s in report.heavy_skus
-            ],
-            "bulky_skus": [
-                {"sku_id": s.sku_id, "description": sku_desc(s), "value": getattr(s, "volume", 0) or 0}
-                for s in report.bulky_skus
-            ],
-            "massive_orders": [
-                {"order_id": o.order_id, "description": f"Pedido con {len(o.sku_ids)} líneas", "value": len(o.sku_ids)}
-                for o in report.massive_orders
-            ],
-            "ubiquitous_skus": [
-                {
-                    "sku_id": s_id,
-                    "description": sku_desc(sku_by_id.get(s_id)),
-                    "value": pct,
-                    "count": count,
-                }
-                for s_id, count, pct in report.ubiquitous_skus
-            ],
-        }
+        # Enriquecer items con description cuando falte (para SKUs)
+        categories = []
+        for rule_id, data in report.items():
+            target = data.get("target", "sku")
+            name = data.get("name", rule_id)
+            attribute = data.get("attribute", "")
+            items = data.get("items", [])
+            enriched = []
+            for it in items:
+                if "sku_id" in it and not it.get("description"):
+                    sku = sku_by_id.get(it["sku_id"])
+                    it = {**it, "description": sku_desc(sku)}
+                enriched.append(it)
+            categories.append({"id": rule_id, "name": name, "target": target, "attribute": attribute, "items": enriched})
+        response_data = {"status": "success", "categories": categories}
         
         # Imprimir en los logs
         print(f"📤 [RESPONSE OUTLIERS]: {json.dumps(response_data, default=str)}")
@@ -386,10 +377,13 @@ async def ejecutar_micro(
             "col_pedido_cant": col_pedido_cant
         }
 
-        allowed_vlm_skus = set(json.loads(vlm_skus_ids))
+        # 1. Parseamos el JSON y forzamos a que todo sea texto sin espacios
+        raw_vlm_ids = json.loads(vlm_skus_ids)
+        allowed_vlm_skus = set(str(sku_id).strip() for sku_id in raw_vlm_ids)
+        
         print(f"🚀 [Micro] Recibidos {len(allowed_vlm_skus)} SKUs para procesar.")
 
-        # 3. LLAMADA ACTUALIZADA AL LOADER
+        # ... (la llamada a load_slotting_inputs_with_stats queda igual) ...
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,
             cycle_days=cycle_days,
@@ -399,8 +393,9 @@ async def ejecutar_micro(
             excluded_skus=None
         )
 
+        # 2. Forzamos el ID del objeto también a texto para comparar "peras con peras"
         if allowed_vlm_skus:
-            skus_list = [s for s in skus_list if s.sku_id in allowed_vlm_skus]
+            skus_list = [s for s in skus_list if str(s.sku_id).strip() in allowed_vlm_skus]
             print(f"✅ [Micro] Lista filtrada a {len(skus_list)} SKUs.")
 
         if not skus_list:

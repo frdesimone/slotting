@@ -67,57 +67,48 @@ def print_kpi_summary(skus, orders, stats):
     console.print(Panel(grid, title="[bold]Reporte de Inicialización[/bold]", expand=False))
 
 def print_outlier_report(report, total_skus, total_orders):
-    """Muestra alertas sobre datos anómalos detectados antes de procesar."""
-    
-    # Si no hay outliers graves, no imprimimos nada para no ensuciar
-    if not (report.heavy_skus or report.massive_orders or report.ubiquitous_skus):
+    """Muestra alertas sobre datos anómalos detectados antes de procesar.
+    report: dict con { rule_id: { target, name, items } }. Formato dinámico.
+    """
+    if not isinstance(report, dict):
+        return
+    has_any = any(
+        (isinstance(v, dict) and len(v.get("items", [])) > 0)
+        or (isinstance(v, list) and len(v) > 0)
+        for v in report.values()
+    )
+    if not has_any:
         return
 
     console.print("\n[bold red]⚠️  ANÁLISIS DE OUTLIERS DETECTÓ ANOMALÍAS[/bold red]")
-    
-    grid = Table.grid(expand=True)
-    grid.add_column(ratio=1)
-    grid.add_column(ratio=1)
-    
-    # Panel Izquierdo: Problemas Físicos
-    t_fisica = Table(show_header=True, header_style="bold yellow", box=None)
-    t_fisica.add_column("Tipo de Anomalía")
-    t_fisica.add_column("Cantidad", justify="right")
-    t_fisica.add_column("Impacto", style="dim")
-    
-    n_heavy = len(report.heavy_skus)
-    if n_heavy > 0:
-        t_fisica.add_row("SKUs muy pesados (>25kg)", f"[red]{n_heavy}[/red]", "Riesgo ergonomía/Bandeja")
-        
-    n_bulky = len(report.bulky_skus)
-    if n_bulky > 0:
-        t_fisica.add_row("SKUs muy voluminosos", f"[yellow]{n_bulky}[/yellow]", "Saturación rápida VLM")
-        
-    n_zeros = len(report.zero_metric_skus)
-    if n_zeros > 0:
-        t_fisica.add_row("SKUs con Vol/Peso = 0", f"[red]{n_zeros}[/red]", "Cálculo de llenado irreal")
-
-    # Panel Derecho: Problemas de Afinidad / Pedidos
-    t_logica = Table(show_header=True, header_style="bold magenta", box=None)
-    t_logica.add_column("Tipo de Anomalía")
-    t_logica.add_column("Cantidad", justify="right")
-    
-    n_massive = len(report.massive_orders)
-    if n_massive > 0:
-        t_logica.add_row(f"Pedidos B2B (>50 líneas)", f"[red]{n_massive}[/red] pedidos")
-        
-    n_ubiq = len(report.ubiquitous_skus)
-    if n_ubiq > 0:
-        t_logica.add_row("SKUs 'Comodín' (En >15% pedidos)", f"[red]{n_ubiq}[/red] SKUs")
-
-    grid.add_row(Panel(t_fisica, title="Anomalías Maestras"), Panel(t_logica, title="Anomalías Transaccionales"))
-    console.print(grid)
-
-    # Detalle de los Omnipresentes (Muy útil para la demo)
-    if report.ubiquitous_skus:
-        console.print("[yellow]💡 Sugerencia: Revise estos SKUs. Podrían ser cajas, bolsas de envío o errores, y arruinarán el clustering:[/yellow]")
-        for sku_id, count, pct in report.ubiquitous_skus[:5]: # Mostrar top 5
-            console.print(f"   - SKU: [bold]{sku_id}[/bold] (Aparece en {count} pedidos, [cyan]{pct:.1%}[/cyan] del total)")
+    t = Table(show_header=True, header_style="bold yellow", box=None)
+    t.add_column("Regla")
+    t.add_column("Cantidad", justify="right")
+    t.add_column("Tipo", style="dim")
+    for rule_id, data in report.items():
+        if isinstance(data, dict):
+            items = data.get("items", [])
+            target = data.get("target", "sku")
+            name = data.get("name", rule_id)
+        else:
+            items = data if isinstance(data, list) else []
+            name, target = rule_id, "sku"
+        if items:
+            t.add_row(name, f"[red]{len(items)}[/red]", "SKU" if target == "sku" else "Pedido")
+    console.print(Panel(t, title="Anomalías Detectadas"))
+    # Detalle de omnipresentes si existe
+    ubiq = report.get("ubiquitous", {})
+    if isinstance(ubiq, dict):
+        ubiq_items = ubiq.get("items", [])
+    else:
+        ubiq_items = ubiq if isinstance(ubiq, list) else []
+    if ubiq_items:
+        console.print("[yellow]💡 Sugerencia: Revise estos SKUs. Podrían ser cajas, bolsas de envío o errores:[/yellow]")
+        for it in ubiq_items[:5]:
+            sid = it.get("sku_id", "")
+            cnt = it.get("count", 0)
+            val = it.get("value", 0)
+            console.print(f"   - SKU: [bold]{sid}[/bold] (Aparece en {cnt} pedidos, [cyan]{val:.1%}[/cyan] del total)")
 
 def print_macro_results(results, vlm_total_vol, vlm_occupancy_target):
     """Visualización de resultados Macro (Allocator)."""

@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from .models import Execution, MacroResult, MicroResult, User
 
 # Función helper para el mock de usuarios (hasta que instales Clerk)
@@ -56,3 +57,27 @@ def save_micro_execution(db: Session, user_id: str, params: dict, kpi: dict, tra
 def get_user_executions(db: Session, user_id: str):
     """Retorna TODAS las ejecuciones filtradas estrictamente por el usuario."""
     return db.query(Execution).filter(Execution.user_id == user_id).all()
+
+
+def get_macro_executions(db: Session, user_id: str, limit: int = 20):
+    """Retorna las últimas ejecuciones Macro del usuario, ordenadas por created_at descendente."""
+    return (
+        db.query(Execution, MacroResult)
+        .join(MacroResult, Execution.id == MacroResult.execution_id)
+        .filter(Execution.user_id == user_id, Execution.job_type == "MACRO")
+        .order_by(desc(Execution.created_at))
+        .limit(limit)
+        .all()
+    )
+
+
+def get_micro_executions(db: Session, user_id: str, limit: int = 20):
+    """Retorna las últimas ejecuciones Micro del usuario, ordenadas por created_at descendente."""
+    return (
+        db.query(Execution, MicroResult)
+        .join(MicroResult, Execution.id == MicroResult.execution_id)
+        .filter(Execution.user_id == user_id, Execution.job_type == "MICRO")
+        .order_by(desc(Execution.created_at))
+        .limit(limit)
+        .all()
+    )

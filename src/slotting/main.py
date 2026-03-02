@@ -29,7 +29,7 @@ from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.common.prep.loader import _filter_orders_by_skus
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
 from .db.database import engine, Base, get_db
-from .db.repository import save_macro_execution, save_micro_execution, get_user_executions
+from .db.repository import save_macro_execution, save_micro_execution, get_user_executions, get_macro_executions, get_micro_executions
 
 
 
@@ -85,6 +85,64 @@ def guardar_temp(upload_file: UploadFile) -> Path:
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "API de Slotting operativa."}
+
+
+def _safe_json(val):
+    """Parsea JSON si viene como string; si ya es dict/list, lo devuelve tal cual."""
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return val
+
+
+@app.get("/api/v1/history")
+def get_history(
+    token: str = Depends(verificar_token),
+    db: Session = Depends(get_db),
+):
+    """Retorna el historial de ejecuciones Macro y Micro del usuario."""
+    CURRENT_USER_ID = "frontend_user_mock_123"
+
+    macro_rows = get_macro_executions(db, CURRENT_USER_ID, limit=20)
+    micro_rows = get_micro_executions(db, CURRENT_USER_ID, limit=20)
+
+    macro_list = []
+    for exec_obj, macro_res in macro_rows:
+        macro_list.append({
+            "execution_id": str(exec_obj.id),
+            "created_at": exec_obj.created_at.isoformat() if exec_obj.created_at else None,
+            "params": _safe_json(exec_obj.parameters),
+            "kpi_results": {
+                "total_skus": macro_res.total_skus,
+                "vlm_skus_count": macro_res.vlm_skus_count,
+                "rack_skus_count": macro_res.rack_skus_count,
+                "vlm_fill_percentage": macro_res.vlm_fill_percentage,
+            },
+            "output_data": _safe_json(macro_res.skus_details),
+        })
+
+    micro_list = []
+    for exec_obj, micro_res in micro_rows:
+        micro_list.append({
+            "execution_id": str(exec_obj.id),
+            "created_at": exec_obj.created_at.isoformat() if exec_obj.created_at else None,
+            "params": _safe_json(exec_obj.parameters),
+            "kpi_results": {
+                "total_trays": micro_res.total_trays,
+                "avg_area_occupancy_pct": micro_res.avg_area_occupancy_pct,
+                "optimized": micro_res.optimized,
+            },
+            "output_data": _safe_json(micro_res.trays_export),
+        })
+
+    return {"status": "success", "macro": macro_list, "micro": micro_list}
+
 
 @app.post("/api/v1/outliers") # o /v1/outliers según como lo tengas
 async def detectar_outliers_endpoint(

@@ -407,8 +407,7 @@ async def ejecutar_micro(
 
         config = MicroSlottingConfig(
             cycle_days=cycle_days,
-            max_trays=n_vlms * n_trays_per_vlm,
-            allow_overflow=True # <--- AGREGAR ESTO
+            max_trays=9999  # Un número altísimo para evitar el ValueError
         )
         
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)

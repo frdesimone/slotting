@@ -407,7 +407,8 @@ async def ejecutar_micro(
 
         config = MicroSlottingConfig(
             cycle_days=cycle_days,
-            max_trays=n_vlms * n_trays_per_vlm
+            max_trays=n_vlms * n_trays_per_vlm,
+            allow_overflow=True # <--- AGREGAR ESTO
         )
         
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
@@ -443,12 +444,13 @@ async def ejecutar_micro(
         avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
 
         trays_export = []
-        for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True)[:50]:
+        for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True): # Sin [:50]
             trays_export.append({
                 "tray_id": getattr(t, 'tray_id', 'N/A'),
                 "occupancy_pct": round(get_occ(t), 2),
                 "item_count": len(t.items),
-                "items": [{"sku": i.sku_id, "vol": getattr(i, 'total_volume', 0)} for i in t.items[:5]]
+                # Mandamos TODOS los items de la bandeja
+                "items": [{"sku": i.sku_id, "vol": getattr(i, 'total_volume', 0)} for i in t.items] 
             })
 
         kpi_dict = {

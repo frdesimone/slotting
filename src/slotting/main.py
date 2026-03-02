@@ -26,6 +26,7 @@ from slotting.algorithms.micro.grouping import build_groups
 from slotting.algorithms.micro.selection import select_groups
 from slotting.algorithms.micro.step7 import build_tray_plans
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
+from slotting.algorithms.common.prep.loader import _filter_orders_by_skus
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
 from .db.database import engine, Base, get_db
 from .db.repository import save_macro_execution, save_micro_execution, get_user_executions
@@ -397,6 +398,9 @@ async def ejecutar_micro(
         if allowed_vlm_skus:
             skus_list = [s for s in skus_list if str(s.sku_id).strip() in allowed_vlm_skus]
             print(f"✅ [Micro] Lista filtrada a {len(skus_list)} SKUs.")
+
+            orders = _filter_orders_by_skus(orders, skus_list, stats)
+            print(f"✅ [Micro] Órdenes sincronizadas con los SKUs válidos.")
 
         if not skus_list:
             raise ValueError("No hay SKUs válidos para procesar en Micro después del filtro.")

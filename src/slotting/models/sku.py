@@ -6,10 +6,10 @@ class SKU:
     sku_id: str
     rot: float     
     height: float
-    width: float = 0.0    # <--- NUEVO
-    length: float = 0.0   # <--- NUEVO
     volume: float
     weight: float
+    width: float = 0.0             # <--- ACÁ ABAJO
+    length: float = 0.0            # <--- ACÁ ABAJO
     units_sold_total: float = 0.0  
     is_sensitive: bool = False     
     vlm_eligible: bool = True     

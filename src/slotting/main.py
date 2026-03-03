@@ -389,6 +389,9 @@ async def ejecutar_macro(
                 "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
                 "category": getattr(r, 'category', '') or '',
                 "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
+                "height": getattr(sku_by_id.get(r.sku_id), 'height', None),
+                "width": getattr(sku_by_id.get(r.sku_id), 'width', None),
+                "length": getattr(sku_by_id.get(r.sku_id), 'length', None),
             } for r in st_results])
 
         unassigned = [r for r in results if r.storage_type == "UNASSIGNED"]
@@ -400,6 +403,9 @@ async def ejecutar_macro(
             "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
             "category": getattr(r, 'category', '') or '',
             "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
+            "height": getattr(sku_by_id.get(r.sku_id), 'height', None),
+            "width": getattr(sku_by_id.get(r.sku_id), 'width', None),
+            "length": getattr(sku_by_id.get(r.sku_id), 'length', None),
         } for r in unassigned])
 
         params_dict = {"storage_types": st_list}
@@ -559,8 +565,10 @@ async def ejecutar_micro(
 
         trays_export = []
         for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True): # Sin [:50]
+            raw_tray_id = getattr(t, 'tray_id', 'N/A')
+            clean_tray_id = str(raw_tray_id).replace("unassigned-unassigned-", "VLM-1-")
             trays_export.append({
-                "tray_id": getattr(t, 'tray_id', 'N/A'),
+                "tray_id": clean_tray_id,
                 "occupancy_pct": round(get_occ(t), 2),
                 "item_count": len(t.items),
                 # Mandamos TODOS los items de la bandeja

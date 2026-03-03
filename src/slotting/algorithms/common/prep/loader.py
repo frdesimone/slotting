@@ -136,6 +136,8 @@ def _build_skus(
                 sku_id=sku_id,
                 rot=float(rot),
                 height=record.height,
+                width=record.width,   # <--- AGREGAR ESTO
+                length=record.length,
                 volume=record.volume,
                 weight=record.weight,
                 cycle_units=cycle_units,

@@ -68,9 +68,14 @@ def _clean_numeric_col(series):
 def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
     print(f"📂 [Codes Loader] Procesando códigos...")
     
-    # Limpiador de textos (quita saltos de línea ocultos de Excel)
     def clean_text(text):
         return str(text).replace('\n', ' ').replace('\r', '').strip().lower()
+
+    # NUEVO: Limpiador de .0 fantasma de Pandas
+    def clean_sku_id(val):
+        s = str(val).strip()
+        if s.endswith('.0'): return s[:-2]
+        return s
 
     sheet_base = clean_text(mapping.get("sheet_maestro", "Base Cód."))
     col_sku = clean_text(mapping.get("col_sku_maestro", "Material"))
@@ -88,41 +93,41 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         xls = pd.ExcelFile(path)
         should_close_xls = True
     
-    # --- DIMENSIONES ---
+    # --- DIMENSIONES (Por si siguen estando en otra hoja) ---
     dimensions_lookup = {}
     actual_sheet_base = next((s for s in xls.sheet_names if sheet_base in clean_text(s)), None)
     
     if actual_sheet_base:
-        df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=100)
-        dim_header_idx = 0
-        for i, r in df_dims_preview.iterrows():
-            row_str = [clean_text(val) for val in r.values if pd.notna(val)]
-            if (any(col_sku in k for k in row_str) or any("material" in k for k in row_str)) and \
-               (any(col_alto in k for k in row_str) or any("alto" in k for k in row_str)):
-                dim_header_idx = i
-                break
-        del df_dims_preview
-        
-        df_dims = pd.read_excel(xls, sheet_name=actual_sheet_base, header=dim_header_idx)
-        df_dims.columns = [clean_text(c) for c in df_dims.columns]
-        
-        dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df_dims.columns), None)
-        c_alto = next((c for c in df_dims.columns if col_alto in c), None)
-        c_ancho = next((c for c in df_dims.columns if col_ancho in c), None)
-        c_largo = next((c for c in df_dims.columns if col_largo in c), None)
-        
-        if dim_id_col and c_alto and c_ancho and c_largo:
-            for _, row in df_dims.iterrows():
-                sku_str = str(row[dim_id_col]).strip()
-                if not sku_str or sku_str in ["nan", "none"]: continue
-                try:
-                    # Usamos abs() para blindar las dimensiones también
-                    h = abs(float(str(row[c_alto]).replace(',','.')))
-                    w = abs(float(str(row[c_ancho]).replace(',','.')))
-                    l = abs(float(str(row[c_largo]).replace(',','.')))
-                    if h > 0 and w > 0 and l > 0: dimensions_lookup[sku_str] = (h, w, l)
-                except ValueError: pass
-        del df_dims
+        try:
+            df_dims_preview = pd.read_excel(xls, sheet_name=actual_sheet_base, header=None, nrows=100)
+            dim_header_idx = 0
+            for i, r in df_dims_preview.iterrows():
+                row_str = [clean_text(val) for val in r.values if pd.notna(val)]
+                if (any(col_sku in k for k in row_str) or any("material" in k for k in row_str)):
+                    dim_header_idx = i
+                    break
+            del df_dims_preview
+            
+            df_dims = pd.read_excel(xls, sheet_name=actual_sheet_base, header=dim_header_idx)
+            df_dims.columns = [clean_text(c) for c in df_dims.columns]
+            dim_id_col = next((c for c in df_dims.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df_dims.columns), None)
+            c_alto = next((c for c in df_dims.columns if col_alto in c), None)
+            c_ancho = next((c for c in df_dims.columns if col_ancho in c), None)
+            c_largo = next((c for c in df_dims.columns if col_largo in c), None)
+            
+            if dim_id_col and c_alto and c_ancho and c_largo:
+                for _, row in df_dims.iterrows():
+                    sku_str = clean_sku_id(row[dim_id_col]) # Limpiamos ID acá también
+                    if not sku_str or sku_str in ["nan", "none"]: continue
+                    try:
+                        h = abs(float(str(row[c_alto]).replace(',','.')))
+                        w = abs(float(str(row[c_ancho]).replace(',','.')))
+                        l = abs(float(str(row[c_largo]).replace(',','.')))
+                        if h > 0 and w > 0 and l > 0: dimensions_lookup[sku_str] = (h, w, l)
+                    except ValueError: pass
+            del df_dims
+        except Exception:
+            pass
 
     # --- HOJA PRINCIPAL ---
     try:
@@ -136,52 +141,37 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     header_found = False
     for i, row in df_preview.iterrows():
         row_str = [clean_text(val) for val in row.values if pd.notna(val)]
-        
-        # 1. Búsqueda estricta (La celda es exactamente igual al nombre de la columna)
         has_id_exact = any(col_sku == k for k in row_str)
-        
-        # 2. Búsqueda combinada (Si es un texto que lo contiene, exigimos que también esté el Volumen o Peso para evitar falsos positivos con títulos)
         has_id_sub = any(col_sku in k for k in row_str)
         has_metric = any(col_vol in k or col_peso in k for k in row_str)
-        
         if has_id_exact or (has_id_sub and has_metric):
             header_idx = i
             header_found = True
-            print(f"   -> [Codes Loader] Cabecera detectada en la fila {i} (Excel {i+1}).")
             break
             
     if not header_found:
         print(f"⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas.")
     del df_preview
 
-    # CARGA REAL
     df = pd.read_excel(xls, sheet_name=sheet_used, header=header_idx)
-    # Limpiamos todas las columnas de la tabla final
     df.columns = [clean_text(c) for c in df.columns]
 
     id_col = next((c for c in df.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
-    if not id_col: raise ValueError(f"No se encontró ID (Buscando: '{col_sku}'). Columnas disponibles: {list(df.columns)}")
-
-    # Detectamos las columnas exactas (con la limpieza de saltos de línea ya aplicada)
     col_v = next((c for c in df.columns if col_vol in c), None)
     col_p = next((c for c in df.columns if col_peso in c), None)
     col_d = next((c for c in df.columns if col_desc in c), None)
     col_cajas = next((c for c in df.columns if col_cajas_m3 in c), None)
     col_cat = next((c for c in df.columns if col_categoria in c), None)
+    
+    # NUEVO: Buscar las dimensiones directamente en la hoja principal
+    col_main_h = next((c for c in df.columns if col_alto in c), None)
+    col_main_w = next((c for c in df.columns if col_ancho in c), None)
+    col_main_l = next((c for c in df.columns if col_largo in c), None)
 
-    # ALERTA EN LOGS SI FALLA
-    if not col_v:
-        print(f"⚠️ [Codes Loader] ALERTA: No se encontró la columna de Volumen. Buscábamos '{col_vol}'. Columnas disponibles: {list(df.columns)}")
-    if not col_p:
-        print(f"⚠️ [Codes Loader] ALERTA: No se encontró la columna de Peso. Buscábamos '{col_peso}'.")
-
-    # Función ultra-segura para convertir textos con comas a floats absolutos
     def safe_float(val):
         if pd.isna(val) or val is None: return 0.0
-        try:
-            return abs(float(str(val).replace(',', '.').strip())) # <--- abs() AQUÍ
-        except ValueError:
-            return 0.0
+        try: return abs(float(str(val).replace(',', '.').strip()))
+        except ValueError: return 0.0
 
     def safe_str(val):
         if pd.isna(val) or val is None: return ""
@@ -189,7 +179,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
     records = {}
     for _, row in df.iterrows():
-        sku_id = str(row[id_col]).strip()
+        sku_id = clean_sku_id(row[id_col]) # Limpiamos ID principal
         if not sku_id or sku_id.lower() in ["nan", "none"]: continue
             
         vol_m3 = safe_float(row[col_v]) if col_v else 0.0
@@ -198,7 +188,16 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         boxes_per_m3 = safe_float(row[col_cajas]) if col_cajas else 0.0
         category = safe_str(row[col_cat]) if col_cat else ""
         
-        h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
+        # NUEVO: Lógica de dimensiones (Prioriza hoja principal > hoja secundaria > fallback matemático)
+        if col_main_h and col_main_w and col_main_l:
+            h = safe_float(row[col_main_h])
+            w = safe_float(row[col_main_w])
+            l = safe_float(row[col_main_l])
+            # Si en esta fila vinieron en cero, aplicamos fallback
+            if h == 0 or w == 0 or l == 0:
+                h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
+        else:
+            h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
 
         records[sku_id] = SkuRecord(
             sku_id=sku_id, avg_units_per_line=None, volume=vol_m3, weight=weight_kg,

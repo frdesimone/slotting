@@ -337,6 +337,25 @@ async def ejecutar_macro(
             excluded_orders=ex_orders_set  # Pasamos los pedidos malos
         )
 
+        # --- Debug: auditar mapeo de columnas (primeros 5 SKUs) ---
+        print("🔍 [Debug MACRO] Primeros 5 SKUs mapeados:")
+        debug_skus = skus_list[:5]
+        debug_list = [
+            {
+                "sku_id": getattr(sku, "sku_id", None),
+                "description": getattr(sku, "description", None),
+                "weight": getattr(sku, "weight", None),
+                "volume": getattr(sku, "volume", None),
+                "length": getattr(sku, "length", None),
+                "width": getattr(sku, "width", None),
+                "height": getattr(sku, "height", None),
+                "category": getattr(sku, "category", None),
+                "family": getattr(sku, "family", None),
+            }
+            for sku in debug_skus
+        ]
+        print(json.dumps(debug_list, indent=2, default=str))
+
         config = MacroSlottingConfig(storage_types=st_list, abc_thresholds=(0.80, 0.95))
         results = run_macro_slotting(skus_list, config)
 
@@ -470,6 +489,25 @@ async def ejecutar_micro(
             mapping=mapping_config,
             excluded_skus=None
         )
+
+        # --- Debug: auditar mapeo de columnas (primeros 5 SKUs) ---
+        print("🔍 [Debug MICRO] Primeros 5 SKUs mapeados (antes del filtro):")
+        debug_skus = skus_list[:5]
+        debug_list = [
+            {
+                "sku_id": getattr(sku, "sku_id", None),
+                "description": getattr(sku, "description", None),
+                "weight": getattr(sku, "weight", None),
+                "volume": getattr(sku, "volume", None),
+                "length": getattr(sku, "length", None),
+                "width": getattr(sku, "width", None),
+                "height": getattr(sku, "height", None),
+                "category": getattr(sku, "category", None),
+                "family": getattr(sku, "family", None),
+            }
+            for sku in debug_skus
+        ]
+        print(json.dumps(debug_list, indent=2, default=str))
 
         # 2. Forzamos el ID del objeto también a texto para comparar "peras con peras"
         if allowed_vlm_skus:

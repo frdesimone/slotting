@@ -198,6 +198,25 @@ async def detectar_outliers_endpoint(
         )
         skus_list = list(skus_dict.values()) if isinstance(skus_dict, dict) else skus_dict
 
+        # --- Debug: auditar mapeo de columnas (primeros 5 SKUs) ---
+        debug_skus = skus_list[:5]
+        debug_list = [
+            {
+                "sku_id": getattr(s, "sku_id", None),
+                "description": getattr(s, "description", None),
+                "weight": getattr(s, "weight", None),
+                "volume": getattr(s, "volume", None),
+                "length": getattr(s, "length", None),
+                "width": getattr(s, "width", None),
+                "height": getattr(s, "height", None),
+                "category": getattr(s, "category", None),
+                "family": getattr(s, "family", None),
+            }
+            for s in debug_skus
+        ]
+        print("🔍 [Debug] Primeros 5 SKUs mapeados:")
+        print(json.dumps(debug_list, indent=2, default=str))
+
         rules_list = []
         try:
             if outliers_config and outliers_config.strip():

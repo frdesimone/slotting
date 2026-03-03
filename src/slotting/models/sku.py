@@ -6,6 +6,8 @@ class SKU:
     sku_id: str
     rot: float     
     height: float
+    width: float = 0.0    # <--- NUEVO
+    length: float = 0.0   # <--- NUEVO
     volume: float
     weight: float
     units_sold_total: float = 0.0  

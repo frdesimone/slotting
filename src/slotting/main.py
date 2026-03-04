@@ -8,7 +8,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form
 from fastapi.responses import JSONResponse
@@ -94,7 +94,7 @@ class WeightsConfig(BaseModel):
 
 class MicroPayload(BaseModel):
     storages: list[StorageTypeConfig]
-    skus: list[dict]  # Dicts de SKUs tal como salen del Macro
+    sku_storage_mapping: dict[str, str] = Field(default_factory=dict)
     weights: WeightsConfig
     # Campos adicionales para compatibilidad con el flujo actual
     cycle_days: float = 15.0
@@ -513,13 +513,8 @@ async def ejecutar_micro(
         if "period_days" not in mapping_config:
             mapping_config["period_days"] = payload_data.period_days
 
-        # Mapa sku_id -> storage_type desde payload.skus (respeta edición del usuario)
-        sku_to_storage: dict[str, str] = {}
-        for s in payload_data.skus:
-            sku_id = s.get("sku_id") or s.get("id") or s.get("material") or s.get("codigo")
-            st = s.get("storage_type") or s.get("storageType")
-            if sku_id and st:
-                sku_to_storage[str(sku_id).strip()] = str(st).strip()
+        # Mapa sku_id -> storage_type desde el payload optimizado
+        sku_to_storage = {str(k).strip(): str(v).strip() for k, v in payload_data.sku_storage_mapping.items()}
 
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,

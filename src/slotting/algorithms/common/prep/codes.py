@@ -6,6 +6,7 @@ Incluye lógica 'Show Must Go On' para evitar paradas por filtros vacíos.
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import pandas as pd
 import numpy as np
 
@@ -159,21 +160,35 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     df.columns = [clean_text(c) for c in df.columns]
     print(f"🔍 [DEBUG] Todas las columnas encontradas en el header: {df.columns.tolist()}")
 
-    id_col = next((c for c in df.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
-    col_v = next((c for c in df.columns if col_vol in c), None)
-    col_p = next((c for c in df.columns if col_peso in c), None)
-    col_d = next((c for c in df.columns if col_desc in c), None)
-    col_cajas = next((c for c in df.columns if col_cajas_m3 in c), None)
-    col_cat = next((c for c in df.columns if col_categoria in c), None)
-    
-    # NUEVO: Buscar las dimensiones directamente en la hoja principal
-    col_main_h = next((c for c in df.columns if col_alto in c), None)
-    col_main_w = next((c for c in df.columns if col_ancho in c), None)
-    col_main_l = next((c for c in df.columns if col_largo in c), None)
+    def get_col(key_name, default_val):
+        val = mapping.get(key_name)
+        if val is not None and str(val).strip() == "": return None  # El usuario la dejó vacía
+        target = clean_text(val if val is not None else default_val)
+        if not target: return None
+        # 1. Prioridad: Match exacto
+        for c in df.columns:
+            if c == target: return c
+        # 2. Prioridad: Match parcial
+        for c in df.columns:
+            if target in c: return c
+        return None
+
+    id_col = get_col("col_sku_maestro", "Material") or next((c for c in ["material", "código", "codigo ii"] if c in df.columns), None)
+    col_v = get_col("col_volumen", "M3/UMB")
+    col_p = get_col("col_peso", "KG/UMB")
+    col_d = get_col("col_desc", "Descripción")
+    col_cajas = get_col("col_cajas_m3", "Cajas/M3")
+    col_cat = get_col("col_categoria", "Categoría")
+    col_main_h = get_col("col_alto", "Alto")
+    col_main_w = get_col("col_ancho", "Ancho")
+    col_main_l = get_col("col_largo", "Largo")
 
     def safe_float(val):
         if pd.isna(val) or val is None: return 0.0
-        try: return abs(float(str(val).replace(',', '.').strip()))
+        s = str(val).strip()
+        match = re.search(r'-?[\d]+(?:[\,\.][\d]+)?', s)
+        if not match: return 0.0
+        try: return abs(float(match.group(0).replace(',', '.')))
         except ValueError: return 0.0
 
     def safe_str(val):

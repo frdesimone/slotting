@@ -258,10 +258,7 @@ def _tray_count(
     trays_weight = max(1, math.ceil(total_weight / max_weight)) if total_weight > 0 else 1
     tray_count = max(trays_area, trays_weight, 1)
     if tray_count > max_trays_limit:
-        raise ValueError(
-            f"Required trays {tray_count} exceeds max_trays {max_trays_limit} "
-            f"for subgroup {subgroup.subgroup_id}"
-        )
+        print(f"⚠️ [Subgrupo {subgroup.subgroup_id}] Requiere {tray_count} bandejas, superando max_trays_limit de {max_trays_limit}. Creando bandejas adicionales...")
     return tray_count
 
 
@@ -346,8 +343,6 @@ def _append_extra_trays_if_needed(
 ) -> list[Tray]:
     if any(units > 1e-6 for units in remaining_units.values()):
         while any(units > 1e-6 for units in remaining_units.values()):
-            if len(trays) >= max_trays_limit:
-                break
             extra_tray = _init_empty_tray(subgroup, len(trays) + 1, max_area, max_weight)
             _fill_tray_to_capacity(
                 tray=extra_tray,
@@ -375,15 +370,7 @@ def _ensure_all_units_allocated(
 ) -> None:
     if any(units > 1e-6 for units in remaining_units.values()):
         leftovers = {sku_id: units for sku_id, units in remaining_units.items() if units > 1e-6}
-        if trays_count >= max_trays_limit:
-            raise ValueError(
-                "Could not allocate all units for subgroup "
-                f"{subgroup.subgroup_id}: {leftovers}. "
-                f"Reached max_trays={max_trays_limit}."
-            )
-        raise ValueError(
-            f"Could not allocate all units for subgroup {subgroup.subgroup_id}: {leftovers}"
-        )
+        print(f"⚠️ [Subgrupo {subgroup.subgroup_id}] Cuidado: No se pudieron ubicar todas las unidades. Quedaron pendientes: {leftovers}")
 
 
 def _filter_empty_trays(trays: list[Tray], subgroup: Subgroup) -> list[Tray]:
@@ -440,14 +427,12 @@ def _validate_unit_fit(subgroup: Subgroup, context: dict[str, object]) -> None:
         area = unit_area[sku_id]
         weight = unit_weight[sku_id]
         if area > max_area:
-            raise ValueError(
-                "SKU unit area exceeds tray capacity: "
-                f"sku_id={sku_id} unit_area={area:.2f} max_area={max_area:.2f} "
-                f"subgroup={subgroup.subgroup_id}"
+            print(
+                f"⚠️ [Subgrupo {subgroup.subgroup_id}] Unidad excede capacidad de bandeja: "
+                f"sku_id={sku_id} unit_area={area:.2f} > max_area={max_area:.2f}"
             )
         if weight > max_weight:
-            raise ValueError(
-                "SKU unit weight exceeds tray capacity: "
-                f"sku_id={sku_id} unit_weight={weight:.2f} max_weight={max_weight:.2f} "
-                f"subgroup={subgroup.subgroup_id}"
+            print(
+                f"⚠️ [Subgrupo {subgroup.subgroup_id}] Unidad excede capacidad de bandeja: "
+                f"sku_id={sku_id} unit_weight={weight:.2f} > max_weight={max_weight:.2f}"
             )

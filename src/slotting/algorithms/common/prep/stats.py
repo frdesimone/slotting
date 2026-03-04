@@ -10,6 +10,7 @@ class OrderLoadStats:
     skipped_missing_fields: int = 0
     skipped_missing_master: int = 0
     total_orders: int = 0
+    period_days: float = 180.0
 
 
 @dataclass

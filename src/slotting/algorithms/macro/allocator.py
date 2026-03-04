@@ -59,6 +59,12 @@ def run_macro_slotting(
         sku_boxes = getattr(sku, 'boxes_per_m3', 0.0) or 0.0
         sku_cat = getattr(sku, 'category', '') or ''
         
+        # 1. Obtenemos el histórico de días real calculado por el loader
+        period_days = getattr(sku, 'period_days', 180.0) or 180.0
+        # 2. Unidades físicas vendidas por día
+        total_units = getattr(sku, 'units_sold_total', 0.0) or 0.0
+        units_per_day = total_units / period_days if period_days > 0 else 0.0
+        
         assigned = False
         
         for st in sorted_storages:
@@ -73,9 +79,8 @@ def run_macro_slotting(
             elif not isinstance(allowed_cats, list):
                 allowed_cats = []
 
-            # Volumen de ciclo: rotación histórica en base a 180 días
-            rot_diaria = sku_rot / 180.0
-            cycle_vol = rot_diaria * cycle_days * sku_vol
+            # 3. Volumen de Ciclo = (Unidades diarias * Días de cobertura de la estantería) * Volumen unitario
+            cycle_vol = (units_per_day * cycle_days) * sku_vol
 
             # Reglas de rechazo: límite de volumen de ciclo
             if cycle_vol > max_cycle_vol_limit:
@@ -106,9 +111,8 @@ def run_macro_slotting(
                 break
                 
         if not assigned:
-            rot_diaria = sku_rot / 180.0
             cycle_days_default = float(sorted_storages[0].get("cycle_days", 15.0)) if sorted_storages else 15.0
-            cycle_vol = rot_diaria * cycle_days_default * sku_vol
+            cycle_vol = (units_per_day * cycle_days_default) * sku_vol
             results.append(MacroResult(
                 sku_id=sku.sku_id,
                 storage_type="UNASSIGNED",

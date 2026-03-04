@@ -19,3 +19,4 @@ class SKU:
 
     cycle_units: float | None = None
     avg_units_per_line: float | None = None
+    period_days: float = 180.0

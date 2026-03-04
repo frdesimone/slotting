@@ -58,6 +58,7 @@ def load_slotting_inputs_with_stats(
         excluded_orders=excluded_orders 
     )
     stats.order_stats = order_stats
+    dinamic_period = order_stats.period_days if order_stats else period_days
 
     # 4. CERRAR EL EXCEL Y LIBERAR MEMORIA
     if xls is not None:
@@ -72,7 +73,7 @@ def load_slotting_inputs_with_stats(
         rot_by_sku=rot_by_sku,
         units_by_sku=units_by_sku,
         cycle_days=cycle_days,
-        period_days=period_days,
+        period_days=dinamic_period,
         include_zero_rot=include_zero_rot,
         stats=stats,
     )
@@ -149,6 +150,7 @@ def _build_skus(
                 description=record.description or "",
                 boxes_per_m3=record.boxes_per_m3 or 0.0,
                 category=record.category or "",
+                period_days=period_days,
                 # -------------------------------
             )
         )

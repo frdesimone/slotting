@@ -29,6 +29,7 @@ def load_orders_from_pedidos(
     col_pedido_id = mapping.get("col_pedido_id", "Nro pedido").strip().lower()
     col_pedido_sku = mapping.get("col_pedido_sku", "Codigo II - Producto").strip().lower()
     col_pedido_cant = mapping.get("col_pedido_cant", "Cantidad unidades").strip().lower()
+    col_pedido_fecha = mapping.get("col_pedido_fecha", "Fecha").strip().lower()
 
     print(f"📂 [Orders Loader] Procesando órdenes...")
 
@@ -61,8 +62,9 @@ def load_orders_from_pedidos(
         id_exact = next((c for c, l in zip(exact_cols, exact_cols_lower) if col_pedido_id in l), None)
         sku_exact = next((c for c, l in zip(exact_cols, exact_cols_lower) if col_pedido_sku in l), None)
         cant_exact = next((c for c, l in zip(exact_cols, exact_cols_lower) if col_pedido_cant in l), None)
+        fecha_exact = next((c for c, l in zip(exact_cols, exact_cols_lower) if col_pedido_fecha in l), None)
         
-        cols_to_use = [c for c in [id_exact, sku_exact, cant_exact] if c is not None]
+        cols_to_use = [c for c in [id_exact, sku_exact, cant_exact, fecha_exact] if c is not None]
         print(f"   -> [Memoria] Cargando SOLO las columnas: {cols_to_use}")
 
         # 2. Cargamos el Excel COMPLETO, pero limitando drásticamente el uso de RAM
@@ -75,6 +77,23 @@ def load_orders_from_pedidos(
 
     # Normalizar las columnas que sí trajimos
     df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # Calcular period_days dinámicamente desde la columna de fecha
+    fecha_col = next((c for c in df.columns if col_pedido_fecha in c), None)
+    if fecha_col:
+        try:
+            dt_series = pd.to_datetime(df[fecha_col], errors="coerce")
+            valid = dt_series.dropna()
+            if len(valid) > 0:
+                min_date = valid.min()
+                max_date = valid.max()
+                if pd.notna(min_date) and pd.notna(max_date):
+                    days = (max_date - min_date).days
+                    if days < 1:
+                        days = 1.0
+                    stats.period_days = float(days)
+        except Exception:
+            pass
 
     id_col = next((c for c in df.columns if col_pedido_id in c), None)
     sku_col = next((c for c in df.columns if col_pedido_sku in c), None)

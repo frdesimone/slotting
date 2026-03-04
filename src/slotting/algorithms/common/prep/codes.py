@@ -185,19 +185,20 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         vol_m3 = safe_float(row[col_v]) if col_v else 0.0
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
         description = safe_str(row[col_d]) if col_d else ""
-        boxes_per_m3 = safe_float(row[col_cajas]) if col_cajas else 0.0
+        m3_per_box = safe_float(row[col_cajas]) if col_cajas else 0.0
+        boxes_per_m3 = (1.0 / m3_per_box) if m3_per_box > 0 else 0.0
         category = safe_str(row[col_cat]) if col_cat else ""
         
-        # NUEVO: Lógica de dimensiones (Prioriza hoja principal > hoja secundaria > fallback matemático)
-        if col_main_h and col_main_w and col_main_l:
-            h = safe_float(row[col_main_h])
-            w = safe_float(row[col_main_w])
-            l = safe_float(row[col_main_l])
-            # Si en esta fila vinieron en cero, aplicamos fallback
-            if h == 0 or w == 0 or l == 0:
-                h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
-        else:
-            h, w, l = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
+        # Lógica de dimensiones independientes: si una falla, las otras se leen igual
+        h, w, l = 0.0, 0.0, 0.0
+        if col_main_h: h = safe_float(row[col_main_h])
+        if col_main_w: w = safe_float(row[col_main_w])
+        if col_main_l: l = safe_float(row[col_main_l])
+        if h == 0 or w == 0 or l == 0:
+            fh, fw, fl = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
+            if h == 0: h = fh
+            if w == 0: w = fw
+            if l == 0: l = fl
 
         records[sku_id] = SkuRecord(
             sku_id=sku_id, avg_units_per_line=None, volume=vol_m3, weight=weight_kg,

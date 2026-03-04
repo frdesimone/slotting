@@ -442,6 +442,9 @@ async def ejecutar_micro(
     include_zero_rot: bool = Form(False),
     optimize_trays: bool = Form(False),
     opt_time_ms: int = Form(10000),
+    weight_affinity: float = Form(0.75),
+    weight_rotation: float = Form(0.15),
+    weight_height: float = Form(0.10),
     
     # --- 2. MAPEO DINÁMICO ---
     sheet_maestro: str = Form("Base Cód."),
@@ -535,7 +538,10 @@ async def ejecutar_micro(
 
         config = MicroSlottingConfig(
             cycle_days=cycle_days,
-            max_trays=9999  # Un número altísimo para evitar el ValueError
+            max_trays=9999,  # Un número altísimo para evitar el ValueError
+            group_score_wa=weight_affinity,
+            group_score_wr=weight_rotation,
+            group_score_wh=weight_height,
         )
         
         affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
@@ -595,7 +601,10 @@ async def ejecutar_micro(
             "n_trays_per_vlm": n_trays_per_vlm,
             "include_zero_rot": include_zero_rot,
             "optimize_trays": optimize_trays,
-            "opt_time_ms": opt_time_ms
+            "opt_time_ms": opt_time_ms,
+            "weight_affinity": weight_affinity,
+            "weight_rotation": weight_rotation,
+            "weight_height": weight_height,
         }
 
         exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)

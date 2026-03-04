@@ -157,6 +157,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
     df = pd.read_excel(xls, sheet_name=sheet_used, header=header_idx)
     df.columns = [clean_text(c) for c in df.columns]
+    print(f"🔍 [DEBUG] Todas las columnas encontradas en el header: {df.columns.tolist()}")
 
     id_col = next((c for c in df.columns if col_sku in c), None) or next((c for c in ["material", "código"] if c in df.columns), None)
     col_v = next((c for c in df.columns if col_vol in c), None)
@@ -220,9 +221,17 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         ("Volumen de caja", col_cajas),
         ("Categoría", col_cat),
     ]
-    found_columns = [name for name, col in LOGICAL_COLS_MAESTRO if col]
-    missing_columns = [name for name, col in LOGICAL_COLS_MAESTRO if not col]
-    print(f"   -> [Memoria] Cargando SOLO las columnas: {found_columns}")
+    print("\n🔍 [DEBUG COLUMNAS MAESTRO - MAPEO EXACTO]")
+    found_columns = []
+    missing_columns = []
+    for logical_name, actual_col in LOGICAL_COLS_MAESTRO:
+        if actual_col:
+            found_columns.append(logical_name)
+            print(f"   ✅ {logical_name} -> ENCONTRADA: '{actual_col}'")
+        else:
+            missing_columns.append(logical_name)
+            print(f"   ❌ {logical_name} -> NO ENCONTRADA")
+    print("-" * 50)
 
     sample_data = []
     for _, row in df.head(5).iterrows():

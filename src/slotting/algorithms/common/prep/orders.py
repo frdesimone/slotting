@@ -78,23 +78,13 @@ def load_orders_from_pedidos(
     # Normalizar las columnas que sí trajimos
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Calcular period_days dinámicamente desde la columna de fecha
-    fecha_col = next((c for c in df.columns if col_pedido_fecha in c), None)
-    if fecha_col:
-        try:
-            dt_series = pd.to_datetime(df[fecha_col], errors="coerce")
-            valid = dt_series.dropna()
-            if len(valid) > 0:
-                min_date = valid.min()
-                max_date = valid.max()
-                if pd.notna(min_date) and pd.notna(max_date):
-                    days = (max_date - min_date).days
-                    if days < 1:
-                        days = 1.0
-                    stats.period_days = float(days)
-        except Exception:
-            pass
+    # Obtenemos los días directamente de la configuración del usuario
+    period_days = float(mapping.get("period_days", 180.0))
+    if period_days <= 0:
+        period_days = 180.0
+    stats.period_days = period_days
 
+    fecha_col = next((c for c in df.columns if col_pedido_fecha in c), None)
     id_col = next((c for c in df.columns if col_pedido_id in c), None)
     sku_col = next((c for c in df.columns if col_pedido_sku in c), None)
     cant_col = next((c for c in df.columns if col_pedido_cant in c), None)

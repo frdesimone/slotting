@@ -12,7 +12,7 @@ def load_slotting_inputs_with_stats(
     cycle_days: float,
     period_days: float = 180.0,
     include_zero_rot: bool = False,
-    mapping: dict = None,
+    mapping: dict = None, 
     excluded_skus: set[str] = None, 
     excluded_orders: set[str] = None, 
 ) -> tuple[list[SKU], list[Order], PrepStats]:

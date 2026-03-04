@@ -119,7 +119,7 @@ def run_macro_slotting(
                     category=sku_cat
                 ))
                 assigned = True
-                break
+                break 
                 
         if not assigned:
             cycle_days_default = float(sorted_storages[0].get("cycle_days", 15.0)) if sorted_storages else 15.0

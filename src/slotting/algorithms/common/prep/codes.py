@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 
 from .parsing import find_header, parse_float, read_csv_rows
+from .stats import DataValidation
 
 # --- DEFINICIÓN DE COLUMNAS ---
 COL_CODIGO = "codigo ii"
@@ -49,7 +50,7 @@ class SkuRecord:
     category: str = ""
 
 
-def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
+def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.ExcelFile = None) -> tuple[dict[str, SkuRecord], DataValidation]:
     path = Path(path)
     if mapping is None: mapping = {}
         
@@ -59,13 +60,14 @@ def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.
     if path.suffix.lower() in [".xlsx", ".xls"]:
         return _load_from_excel_bremen(path, mapping, xls)
     else:
-        return _load_from_csv_generic(path)
+        records = _load_from_csv_generic(path)
+        return records, DataValidation()
 
 def _clean_numeric_col(series):
     # Convertimos a número limpiando comas y forzamos el valor absoluto
     return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce').abs()
 
-def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> dict[str, SkuRecord]:
+def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> tuple[dict[str, SkuRecord], DataValidation]:
     print(f"📂 [Codes Loader] Procesando códigos...")
     
     def clean_text(text):
@@ -205,12 +207,43 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             height=h, width=w, length=l, is_sensitive=False, vlm_eligible=True, source_classification="BREMEN_XLS",
             description=description, boxes_per_m3=boxes_per_m3, category=category
         )
+
+    # Reporte de validación
+    LOGICAL_COLS_MAESTRO = [
+        ("Código de SKU", id_col),
+        ("Descripción del SKU", col_d),
+        ("Volumen (m3)", col_v),
+        ("Peso (kg)", col_p),
+        ("Alto (m)", col_main_h),
+        ("Largo (m)", col_main_l),
+        ("Ancho (m)", col_main_w),
+        ("Volumen de caja", col_cajas),
+        ("Categoría", col_cat),
+    ]
+    found_columns = [name for name, col in LOGICAL_COLS_MAESTRO if col]
+    missing_columns = [name for name, col in LOGICAL_COLS_MAESTRO if not col]
+    print(f"   -> [Memoria] Cargando SOLO las columnas: {found_columns}")
+
+    sample_data = []
+    for _, row in df.head(5).iterrows():
+        sample_data.append({
+            "Código de SKU": str(row[id_col]) if id_col and id_col in row.index else "",
+            "Descripción del SKU": str(row[col_d]) if col_d and col_d in row.index else "",
+            "Volumen (m3)": row[col_v] if col_v and col_v in row.index else "",
+            "Peso (kg)": row[col_p] if col_p and col_p in row.index else "",
+            "Alto (m)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
+            "Largo (m)": row[col_main_l] if col_main_l and col_main_l in row.index else "",
+            "Ancho (m)": row[col_main_w] if col_main_w and col_main_w in row.index else "",
+            "Volumen de caja": row[col_cajas] if col_cajas and col_cajas in row.index else "",
+            "Categoría": str(row[col_cat]) if col_cat and col_cat in row.index else "",
+        })
+    validation = DataValidation(found_columns=found_columns, missing_columns=missing_columns, sample_data=sample_data)
         
     if should_close_xls: xls.close()
     del df
     import gc; gc.collect()
         
-    return records
+    return records, validation
 
 def _load_from_csv_generic(path: Path) -> dict[str, SkuRecord]:
     """Carga Legacy CSV"""

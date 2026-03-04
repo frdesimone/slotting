@@ -49,6 +49,7 @@ def run_macro_slotting(
     limits = {st["name"]: float(st.get("capacity", float('inf'))) * float(st.get("occupancy", 1.0)) for st in sorted_storages}
     
     results: list[MacroResult] = []
+    debug_math_logged = False
 
     # 4. Asignación Dinámica
     for sku in priority_queue:
@@ -82,6 +83,16 @@ def run_macro_slotting(
             # 3. Volumen de Ciclo = (Unidades diarias * Días de cobertura de la estantería) * Volumen unitario
             cycle_vol = (units_per_day * cycle_days) * sku_vol
 
+            if not debug_math_logged:
+                print(f"\n🔍 [DEBUG MATH MACRO] SKU: {sku.sku_id}")
+                print(f"   -> total_units_sold: {total_units}")
+                print(f"   -> period_days: {period_days}")
+                print(f"   -> units_per_day (total/period): {units_per_day}")
+                print(f"   -> sku_vol (volumen unitario): {sku_vol}")
+                print(f"   -> cycle_days (cobertura): {cycle_days}")
+                print(f"   -> cycle_vol FINAL: {cycle_vol}\n")
+                debug_math_logged = True
+
             # Reglas de rechazo: límite de volumen de ciclo
             if cycle_vol > max_cycle_vol_limit:
                 continue
@@ -113,6 +124,17 @@ def run_macro_slotting(
         if not assigned:
             cycle_days_default = float(sorted_storages[0].get("cycle_days", 15.0)) if sorted_storages else 15.0
             cycle_vol = (units_per_day * cycle_days_default) * sku_vol
+
+            if not debug_math_logged:
+                print(f"\n🔍 [DEBUG MATH MACRO] SKU: {sku.sku_id}")
+                print(f"   -> total_units_sold: {total_units}")
+                print(f"   -> period_days: {period_days}")
+                print(f"   -> units_per_day (total/period): {units_per_day}")
+                print(f"   -> sku_vol (volumen unitario): {sku_vol}")
+                print(f"   -> cycle_days (cobertura): {cycle_days_default}")
+                print(f"   -> cycle_vol FINAL: {cycle_vol}\n")
+                debug_math_logged = True
+
             results.append(MacroResult(
                 sku_id=sku.sku_id,
                 storage_type="UNASSIGNED",

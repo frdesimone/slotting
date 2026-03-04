@@ -33,7 +33,8 @@ def load_slotting_inputs_with_stats(
         xls = pd.ExcelFile(file_path)
 
     # 2. Cargar Maestro
-    sku_records = load_sku_records_from_codes(file_path, mapping=mapping, xls=xls) 
+    sku_records, maestro_validation = load_sku_records_from_codes(file_path, mapping=mapping, xls=xls)
+    stats.maestro_validation = maestro_validation
     stats.total_skus_master = len(sku_records)
 
     print(f"🔍 [Loader] Maestro cargado con {len(sku_records)} SKUs.")
@@ -58,6 +59,7 @@ def load_slotting_inputs_with_stats(
         excluded_orders=excluded_orders 
     )
     stats.order_stats = order_stats
+    stats.pedidos_validation = order_stats.pedidos_validation if order_stats else None
     dinamic_period = order_stats.period_days if order_stats else period_days
 
     # 4. CERRAR EL EXCEL Y LIBERAR MEMORIA

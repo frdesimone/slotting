@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from slotting.models import Order
-from .stats import OrderLoadStats
+from .stats import OrderLoadStats, DataValidation
 
 def _clean_numeric_col(series):
     # Convertimos a número limpiando comas y forzamos el valor absoluto
@@ -104,6 +104,27 @@ def load_orders_from_pedidos(
 
     if cant_col:
         df[cant_col] = _clean_numeric_col(df[cant_col])
+
+    # Reporte de validación
+    LOGICAL_COLS_PEDIDOS = [
+        ("Nro pedido", id_col),
+        ("Código SKU", sku_col),
+        ("Cantidad", cant_col),
+        ("Fecha", fecha_col),
+    ]
+    found_columns = [name for name, col in LOGICAL_COLS_PEDIDOS if col]
+    missing_columns = [name for name, col in LOGICAL_COLS_PEDIDOS if not col]
+    sample_data = []
+    for _, row in df.head(5).iterrows():
+        sample_data.append({
+            "Nro pedido": str(row[id_col]) if id_col in row.index else "",
+            "Código SKU": str(row[sku_col]) if sku_col in row.index else "",
+            "Cantidad": row[cant_col] if cant_col and cant_col in row.index else "",
+            "Fecha": str(row[fecha_col]) if fecha_col and fecha_col in row.index else "",
+        })
+    stats.pedidos_validation = DataValidation(
+        found_columns=found_columns, missing_columns=missing_columns, sample_data=sample_data
+    )
 
     order_items: dict[str, set[str]] = defaultdict(set)
     rot_by_sku: dict[str, int] = defaultdict(int)

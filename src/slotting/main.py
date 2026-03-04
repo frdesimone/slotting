@@ -190,7 +190,7 @@ async def detectar_outliers_endpoint(
         }
 
         # Le pasamos el mismo path para todo
-        skus_dict, orders, _ = load_slotting_inputs_with_stats(
+        skus_dict, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file, # <-- CAMBIO CLAVE
             cycle_days=cycle_days,
             include_zero_rot=True,
@@ -245,7 +245,14 @@ async def detectar_outliers_endpoint(
                     it = {**it, "description": sku_desc(sku)}
                 enriched.append(it)
             categories.append({"id": rule_id, "name": name, "target": target, "attribute": attribute, "items": enriched})
-        response_data = {"status": "success", "categories": categories}
+        response_data = {
+            "status": "success",
+            "categories": categories,
+            "validation": {
+                "maestro": stats.maestro_validation.__dict__ if getattr(stats, "maestro_validation", None) else None,
+                "pedidos": stats.pedidos_validation.__dict__ if getattr(stats, "pedidos_validation", None) else None,
+            },
+        }
         
         # Imprimir en los logs
         print(f"📤 [RESPONSE OUTLIERS]: {json.dumps(response_data, default=str)}")

@@ -8,6 +8,8 @@ import json
 
 from sqlalchemy.orm import Session
 
+from pydantic import BaseModel
+
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -66,6 +68,44 @@ def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security
         )
     return credentials.credentials
 
+
+# ==========================================
+# MODELOS PYDANTIC PARA MICRO SLOTTING
+# ==========================================
+class StorageTypeConfig(BaseModel):
+    storage_type: str
+    max_trays: int
+    max_weight: float
+    tray_length: float
+    tray_width: float
+    is_fixed_height: bool = False
+
+
+class SkuMicroInput(BaseModel):
+    sku_id: str
+    storage_type: str
+
+
+class WeightsConfig(BaseModel):
+    affinity: float
+    rotation: float
+    height: float
+
+
+class MicroPayload(BaseModel):
+    storages: list[StorageTypeConfig]
+    skus: list[dict]  # Dicts de SKUs tal como salen del Macro
+    weights: WeightsConfig
+    # Campos adicionales para compatibilidad con el flujo actual
+    cycle_days: float = 15.0
+    include_zero_rot: bool = False
+    optimize_trays: bool = False
+    opt_time_ms: int = 10000
+    n_vlms: int = 10
+    n_trays_per_vlm: int = 100
+    mapping: dict | None = None
+    period_days: float = 180.0
+    vlm_skus_ids: list[str] | None = None  # Fallback: IDs directos si skus no tiene storage_type
 
 
 # ==========================================
@@ -434,191 +474,182 @@ async def ejecutar_macro(
 
 @app.post("/api/v1/micro")
 async def ejecutar_micro(
-    file: UploadFile = File(...), # <-- 1. UN SOLO ARCHIVO
-    cycle_days: float = Form(15.0),
-    vlm_skus_ids: str = Form("[]"),
-    n_vlms: int = Form(10),
-    n_trays_per_vlm: int = Form(100),
-    include_zero_rot: bool = Form(False),
-    optimize_trays: bool = Form(False),
-    opt_time_ms: int = Form(10000),
-    weight_affinity: float = Form(0.75),
-    weight_rotation: float = Form(0.15),
-    weight_height: float = Form(0.10),
-    
-    # --- 2. MAPEO DINÁMICO ---
-    sheet_maestro: str = Form("Base Cód."),
-    col_sku_maestro: str = Form("Material"),
-    col_volumen: str = Form("M3/UMB"),
-    col_peso: str = Form("KG/UMB"),
-    col_alto: str = Form("Alto"),
-    col_ancho: str = Form("Ancho"),
-    col_largo: str = Form("Largo"),
-    col_desc: str = Form("Descripción"),
-    col_cajas_m3: str = Form("Cajas/M3"),
-    col_categoria: str = Form("Categoría"),
-    sheet_pedidos: str = Form("Pedidos"),
-    col_pedido_id: str = Form("Nro pedido"),
-    col_pedido_sku: str = Form("Codigo II - Producto"),
-    col_pedido_cant: str = Form("Cantidad unidades"),
-    # -------------------------
-    
+    file: UploadFile = File(...),
+    payload: str = Form(..., description="JSON con MicroPayload: storages, skus, weights, mapping, etc."),
     token: str = Depends(verificar_token),
     db: Session = Depends(get_db)
 ):
     """Ejecuta el Micro Slotting (Armado de Bandejas), opcionalmente optimizado."""
+    try:
+        payload_data = MicroPayload.model_validate(json.loads(payload))
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Payload JSON inválido: {e}") from e
+
     path_file = guardar_temp(file)
     CURRENT_USER_ID = "frontend_user_mock_123"
-    
+
     try:
-
-        
-        mapping_config = {
-            "sheet_maestro": sheet_maestro,
-            "col_sku_maestro": col_sku_maestro,
-            "col_volumen": col_volumen,
-            "col_peso": col_peso,
-            "col_alto": col_alto,
-            "col_ancho": col_ancho,
-            "col_largo": col_largo,
-            "col_desc": col_desc,
-            "col_cajas_m3": col_cajas_m3,
-            "col_categoria": col_categoria,
-            "sheet_pedidos": sheet_pedidos,
-            "col_pedido_id": col_pedido_id,
-            "col_pedido_sku": col_pedido_sku,
-            "col_pedido_cant": col_pedido_cant
+        mapping_config = payload_data.mapping or {}
+        # Valores por defecto si mapping está vacío
+        defaults = {
+            "sheet_maestro": "Base Cód.",
+            "col_sku_maestro": "Material",
+            "col_volumen": "M3/UMB",
+            "col_peso": "KG/UMB",
+            "col_alto": "Alto",
+            "col_ancho": "Ancho",
+            "col_largo": "Largo",
+            "col_desc": "Descripción",
+            "col_cajas_m3": "Cajas/M3",
+            "col_categoria": "Categoría",
+            "sheet_pedidos": "Pedidos",
+            "col_pedido_id": "Nro pedido",
+            "col_pedido_sku": "Codigo II - Producto",
+            "col_pedido_cant": "Cantidad unidades",
         }
+        for k, v in defaults.items():
+            if k not in mapping_config:
+                mapping_config[k] = v
+        if "period_days" not in mapping_config:
+            mapping_config["period_days"] = payload_data.period_days
 
-        # 1. Parseamos el JSON y forzamos a que todo sea texto sin espacios
-        raw_vlm_ids = json.loads(vlm_skus_ids)
-        allowed_vlm_skus = set(str(sku_id).strip() for sku_id in raw_vlm_ids)
-        
-        print(f"🚀 [Micro] Recibidos {len(allowed_vlm_skus)} SKUs para procesar.")
+        # Mapa sku_id -> storage_type desde payload.skus (respeta edición del usuario)
+        sku_to_storage: dict[str, str] = {}
+        for s in payload_data.skus:
+            sku_id = s.get("sku_id") or s.get("id") or s.get("material") or s.get("codigo")
+            st = s.get("storage_type") or s.get("storageType")
+            if sku_id and st:
+                sku_to_storage[str(sku_id).strip()] = str(st).strip()
 
-        # ... (la llamada a load_slotting_inputs_with_stats queda igual) ...
         skus_list, orders, stats = load_slotting_inputs_with_stats(
             file_path=path_file,
-            cycle_days=cycle_days,
-            period_days=180.0,
-            include_zero_rot=include_zero_rot,
+            cycle_days=payload_data.cycle_days,
+            period_days=payload_data.period_days,
+            include_zero_rot=payload_data.include_zero_rot,
             mapping=mapping_config,
             excluded_skus=None
         )
 
-        # --- Debug: auditar mapeo de columnas (primeros 5 SKUs) ---
-        print("🔍 [Debug MICRO] Primeros 5 SKUs mapeados (antes del filtro):")
-        debug_skus = skus_list[:5]
-        debug_list = [
-            {
-                "sku_id": getattr(sku, "sku_id", None),
-                "description": getattr(sku, "description", None),
-                "weight": getattr(sku, "weight", None),
-                "volume": getattr(sku, "volume", None),
-                "length": getattr(sku, "length", None),
-                "width": getattr(sku, "width", None),
-                "height": getattr(sku, "height", None),
-                "category": getattr(sku, "category", None),
-                "family": getattr(sku, "family", None),
-            }
-            for sku in debug_skus
-        ]
-        print(json.dumps(debug_list, indent=2, default=str))
+        # Filtrar SKUs: solo los que están en payload.skus (respeta storage_type del usuario)
+        sku_ids_in_payload = set(sku_to_storage.keys())
+        skus_list = [s for s in skus_list if str(s.sku_id).strip() in sku_ids_in_payload]
+        orders = _filter_orders_by_skus(orders, skus_list, stats)
+        sku_by_id = {str(s.sku_id).strip(): s for s in skus_list}
 
-        # 2. Forzamos el ID del objeto también a texto para comparar "peras con peras"
-        if allowed_vlm_skus:
-            skus_list = [s for s in skus_list if str(s.sku_id).strip() in allowed_vlm_skus]
-            print(f"✅ [Micro] Lista filtrada a {len(skus_list)} SKUs.")
-
-            orders = _filter_orders_by_skus(orders, skus_list, stats)
-            print(f"✅ [Micro] Órdenes sincronizadas con los SKUs válidos.")
-
-        if not skus_list:
-            raise ValueError("No hay SKUs válidos para procesar en Micro después del filtro.")
-
-        config = MicroSlottingConfig(
-            cycle_days=cycle_days,
-            max_trays=9999,  # Un número altísimo para evitar el ValueError
-            group_score_wa=weight_affinity,
-            group_score_wr=weight_rotation,
-            group_score_wh=weight_height,
-        )
-        
-        affinity_graph = build_affinity_graph(orders=orders, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
-        groups = build_groups(skus=skus_list, orders=orders, config=config)
-        selected_groups = select_groups(groups=groups, skus=skus_list, selection_cost_mode=config.selection_cost_mode)
-        
-        tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_list, affinity_graph=affinity_graph, config=config)
-        final_trays = [tray for plan in tray_plans for tray in plan.trays]
-
-        if optimize_trays and final_trays:
-            sku_by_id = {sku.sku_id: sku for sku in skus_list}
-            subgroup_lookup = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
-            
-            hybrid = build_hybrid_kpi_state(
-                subgroups=list(subgroup_lookup.values()),
-                trays=final_trays,
-                sku_by_id=sku_by_id,
-                affinity_graph=affinity_graph,
-                config=config,
-            )
-            
-            opt_config = LocalSearchConfig(time_budget_ms=opt_time_ms, allow_annealing=True)
-            optimize(hybrid, opt_config)
-            final_trays = hybrid.all_trays()
-
-        if not final_trays:
-            return {"status": "success", "kpi": {}, "trays": []}
+        print(f"🚀 [Micro] {len(skus_list)} SKUs cargados, {len(payload_data.storages)} tipos de almacenamiento.")
 
         def get_occ(t):
-            return t.occupancy_percent if hasattr(t, 'occupancy_percent') else (getattr(t, 'area_used', 0)/getattr(t, 'max_area', 1))*100
+            return t.occupancy_percent if hasattr(t, 'occupancy_percent') else (getattr(t, 'area_used', 0) / getattr(t, 'max_area', 1)) * 100
 
-        total_trays = len(final_trays)
-        avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
+        results_by_storage: dict[str, dict] = {}
 
-        trays_export = []
-        for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True): # Sin [:50]
-            raw_tray_id = getattr(t, 'tray_id', 'N/A')
-            clean_tray_id = str(raw_tray_id).replace("unassigned-unassigned-", "VLM-1-")
-            trays_export.append({
-                "tray_id": clean_tray_id,
-                "occupancy_pct": round(get_occ(t), 2),
-                "item_count": len(t.items),
-                # Mandamos TODOS los items de la bandeja
-                "items": [{"sku": i.sku_id, "vol": getattr(i, 'total_volume', 0)} for i in t.items] 
-            })
+        for storage_cfg in payload_data.storages:
+            st_key = storage_cfg.storage_type.strip()
+            st_upper = st_key.upper()
 
-        kpi_dict = {
-            "total_trays": total_trays,
-            "skus_placed": len(skus_list),
-            "avg_area_occupancy_pct": round(avg_occupancy, 2),
-            "optimized": optimize_trays
-        }
+            # Filtrar SKUs que pertenecen a este storage_type
+            skus_for_storage = [s for s in skus_list if sku_to_storage.get(str(s.sku_id).strip(), "").upper() == st_upper]
+            if not skus_for_storage:
+                print(f"   ⏭️ [Micro] {st_key}: sin SKUs, omitiendo.")
+                continue
+
+            orders_for_storage = _filter_orders_by_skus(orders, skus_for_storage, stats)
+
+            # Altura fija: si is_fixed_height, peso 0; si no, usar payload.weights.height
+            weight_height = 0.0 if storage_cfg.is_fixed_height else payload_data.weights.height
+
+            # Config desde storage_cfg
+            tray_area_mm2 = storage_cfg.tray_length * storage_cfg.tray_width * 1e6  # m² -> mm²
+            config = MicroSlottingConfig(
+                cycle_days=payload_data.cycle_days,
+                max_trays=storage_cfg.max_trays,
+                tray_weight_max=storage_cfg.max_weight,
+                tray_base_area_max=tray_area_mm2,
+                group_score_wa=payload_data.weights.affinity,
+                group_score_wr=payload_data.weights.rotation,
+                group_score_wh=weight_height,
+            )
+
+            # Ejecutar motor Micro
+            affinity_graph = build_affinity_graph(orders=orders_for_storage, top_k=config.graph_top_k_neighbors, aff_min=config.graph_aff_min, metric=config.affinity_metric)
+            groups = build_groups(skus=skus_for_storage, orders=orders_for_storage, config=config)
+            selected_groups = select_groups(groups=groups, skus=skus_for_storage, selection_cost_mode=config.selection_cost_mode)
+            tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_for_storage, affinity_graph=affinity_graph, config=config)
+            final_trays = [tray for plan in tray_plans for tray in plan.trays]
+
+            if payload_data.optimize_trays and final_trays:
+                sg_by_id = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
+                sku_by_id_local = {s.sku_id: s for s in skus_for_storage}
+                hybrid = build_hybrid_kpi_state(
+                    subgroups=list(sg_by_id.values()),
+                    trays=final_trays,
+                    sku_by_id=sku_by_id_local,
+                    affinity_graph=affinity_graph,
+                    config=config,
+                )
+                opt_config = LocalSearchConfig(time_budget_ms=payload_data.opt_time_ms, allow_annealing=True)
+                optimize(hybrid, opt_config)
+                final_trays = hybrid.all_trays()
+
+            if not final_trays:
+                results_by_storage[st_key] = {"kpi": {"total_trays": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": []}
+                continue
+
+            total_trays = len(final_trays)
+            avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
+
+            trays_export = []
+            for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True):
+                raw_tray_id = getattr(t, 'tray_id', 'N/A')
+                clean_tray_id = str(raw_tray_id).replace("unassigned-unassigned-", f"{st_key}-1-")
+                items_export = []
+                for i in t.items:
+                    vol = getattr(i, 'total_volume', 0) or 0
+                    sku = sku_by_id.get(str(getattr(i, 'sku_id', '')).strip())
+                    desc = getattr(sku, 'description', '') if sku else ''
+                    boxes_per_m3 = getattr(sku, 'boxes_per_m3', 0) or 0 if sku else 0
+                    boxes = vol * boxes_per_m3 if boxes_per_m3 else 0
+                    items_export.append({"sku": getattr(i, 'sku_id', ''), "vol": vol, "description": desc, "boxes": round(boxes, 2)})
+                trays_export.append({
+                    "tray_id": clean_tray_id,
+                    "occupancy_pct": round(get_occ(t), 2),
+                    "item_count": len(t.items),
+                    "items": items_export,
+                })
+
+            kpi_dict = {
+                "total_trays": total_trays,
+                "skus_placed": len(skus_for_storage),
+                "avg_area_occupancy_pct": round(avg_occupancy, 2),
+                "optimized": payload_data.optimize_trays,
+            }
+            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": trays_export}
+            print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs.")
 
         params_dict = {
-            "cycle_days": cycle_days,
-            "n_vlms": n_vlms,
-            "n_trays_per_vlm": n_trays_per_vlm,
-            "include_zero_rot": include_zero_rot,
-            "optimize_trays": optimize_trays,
-            "opt_time_ms": opt_time_ms,
-            "weight_affinity": weight_affinity,
-            "weight_rotation": weight_rotation,
-            "weight_height": weight_height,
+            "cycle_days": payload_data.cycle_days,
+            "n_vlms": payload_data.n_vlms,
+            "n_trays_per_vlm": payload_data.n_trays_per_vlm,
+            "include_zero_rot": payload_data.include_zero_rot,
+            "optimize_trays": payload_data.optimize_trays,
+            "opt_time_ms": payload_data.opt_time_ms,
+            "weight_affinity": payload_data.weights.affinity,
+            "weight_rotation": payload_data.weights.rotation,
+            "weight_height": payload_data.weights.height,
+            "storages": [s.model_dump() for s in payload_data.storages],
         }
-
-        exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, trays_export)
-        print(f"Ejecución Micro guardada exitosamente en DB con ID: {exec_id}")
-
-        response_data = {
-            "status": "success",
-            "execution_id": str(exec_id), 
-            "kpi": kpi_dict,
-            "best_trays": trays_export
+        all_trays = [t for r in results_by_storage.values() for t in r.get("best_trays", [])]
+        total_trays_agg = sum(r["kpi"].get("total_trays", 0) for r in results_by_storage.values())
+        avg_occ_list = [r["kpi"].get("avg_area_occupancy_pct", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
+        agg_kpi = {
+            "total_trays": total_trays_agg,
+            "avg_area_occupancy_pct": sum(avg_occ_list) / len(avg_occ_list) if avg_occ_list else 0,
+            "optimized": payload_data.optimize_trays,
         }
-        
+        exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, agg_kpi, all_trays)
+
+        response_data = {"status": "success", "results_by_storage": results_by_storage}
         print(f"📤 [RESPONSE MICRO]: {json.dumps(response_data, default=str)}")
-        
         return response_data
 
     except Exception as e:

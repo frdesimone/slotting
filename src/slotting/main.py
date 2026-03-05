@@ -593,6 +593,9 @@ async def ejecutar_micro(
             total_trays = len(final_trays)
             avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
 
+            skus_dict = {str(s.sku_id).strip(): s for s in skus_list}
+            total_wasted_volume = 0.0
+
             trays_export = []
             for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True):
                 raw_tray_id = getattr(t, 'tray_id', 'N/A')
@@ -612,18 +615,34 @@ async def ejecutar_micro(
                     sku_id = item.get("sku")
                     if not sku_id:
                         continue
+                    sku_obj = skus_dict.get(str(sku_id).strip())
+                    height = sku_obj.height if sku_obj else 0.0
                     if sku_id in consolidated_items:
                         consolidated_items[sku_id]["vol"] += item.get("vol", 0.0)
                         consolidated_items[sku_id]["boxes"] = consolidated_items[sku_id].get("boxes", 0.0) + item.get("boxes", 0.0)
                     else:
                         consolidated_items[sku_id] = dict(item)
+                        consolidated_items[sku_id]["height"] = height
                 final_items = list(consolidated_items.values())
+
+                # Cálculo del desperdicio por diferencias de altura
+                tray_max_height = max([i.get("height", 0.0) for i in final_items], default=0.0)
+                tray_wasted_vol = 0.0
+                for i in final_items:
+                    h = i.get("height", 0.0)
+                    if h > 0:
+                        base_area = i["vol"] / h
+                        wasted = base_area * (tray_max_height - h)
+                        tray_wasted_vol += wasted
+                total_wasted_volume += tray_wasted_vol
 
                 trays_export.append({
                     "tray_id": clean_tray_id,
                     "occupancy_pct": round(get_occ(t), 2),
                     "item_count": len(final_items),
                     "items": final_items,
+                    "max_height": tray_max_height,
+                    "wasted_vol": tray_wasted_vol,
                 })
 
             kpi_dict = {
@@ -631,6 +650,7 @@ async def ejecutar_micro(
                 "skus_placed": len(skus_for_storage),
                 "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
+                "total_wasted_vol": total_wasted_volume,
             }
             results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": trays_export}
             print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs.")

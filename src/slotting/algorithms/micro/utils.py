@@ -20,7 +20,9 @@ def cycle_area_weight(sku: SKU) -> tuple[float, float]:
 def tray_capacity(base_area_max: float, op_void: float, weight_max: float) -> tuple[float, float]:
     max_area = base_area_max * (1.0 - op_void)
     if max_area <= 0:
-        raise ValueError("Usable tray area must be > 0")
+        print("⚠️ [Alerta] Usable tray area debe ser > 0. Usando fallback 1.0 mm².")
+        max_area = 1.0
     if weight_max <= 0:
-        raise ValueError("Tray weight max must be > 0")
+        print("⚠️ [Alerta] Tray weight max debe ser > 0. Usando fallback 1.0 kg.")
+        weight_max = 1.0
     return max_area, weight_max

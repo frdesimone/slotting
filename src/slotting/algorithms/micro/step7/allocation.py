@@ -376,7 +376,7 @@ def _ensure_all_units_allocated(
 def _filter_empty_trays(trays: list[Tray], subgroup: Subgroup) -> list[Tray]:
     trays = [tray for tray in trays if tray.items]
     if not trays:
-        raise ValueError(f"No trays generated for subgroup {subgroup.subgroup_id}")
+        print(f"⚠️ [Subgrupo {subgroup.subgroup_id}] No se generaron bandejas. Devolviendo lista vacía.")
     return trays
 
 

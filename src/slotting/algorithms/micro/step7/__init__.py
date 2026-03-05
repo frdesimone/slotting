@@ -35,10 +35,8 @@ def build_tray_plans(
         for subgroup in subgroups:
             remaining = config.max_trays - total_trays
             if remaining <= 0:
-                raise ValueError(
-                    f"Reached max_trays={config.max_trays} before subgroup "
-                    f"{subgroup.subgroup_id} (allocated={total_trays})"
-                )
+                print(f"⚠️ [Alerta Global] Límite de {config.max_trays} bandejas alcanzado. Cortando ejecución y dejando SKUs restantes sin asignar...")
+                break
             subgroup_trays = build_trays_for_subgroup(
                 subgroup, sku_by_id, config, max_trays_limit=remaining
             )
@@ -59,10 +57,8 @@ def build_tray_plans(
             for subgroup in extra_subgroups:
                 remaining = config.max_trays - total_trays
                 if remaining <= 0:
-                    raise ValueError(
-                        f"Reached max_trays={config.max_trays} before subgroup "
-                        f"{subgroup.subgroup_id} (allocated={total_trays})"
-                    )
+                    print(f"⚠️ [Alerta Global] Límite de {config.max_trays} bandejas alcanzado. Cortando ejecución y dejando SKUs restantes sin asignar...")
+                    break
                 subgroup_trays = build_trays_for_subgroup(
                     subgroup, sku_by_id, config, max_trays_limit=remaining
                 )

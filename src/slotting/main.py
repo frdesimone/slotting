@@ -605,11 +605,25 @@ async def ejecutar_micro(
                     boxes_per_m3 = getattr(sku, 'boxes_per_m3', 0) or 0 if sku else 0
                     boxes = vol * boxes_per_m3 if boxes_per_m3 else 0
                     items_export.append({"sku": getattr(i, 'sku_id', ''), "vol": vol, "description": desc, "boxes": round(boxes, 2)})
+
+                # Consolidar SKUs duplicados (mismo SKU fraccionado en varios ítems)
+                consolidated_items = {}
+                for item in items_export:
+                    sku_id = item.get("sku")
+                    if not sku_id:
+                        continue
+                    if sku_id in consolidated_items:
+                        consolidated_items[sku_id]["vol"] += item.get("vol", 0.0)
+                        consolidated_items[sku_id]["boxes"] = consolidated_items[sku_id].get("boxes", 0.0) + item.get("boxes", 0.0)
+                    else:
+                        consolidated_items[sku_id] = dict(item)
+                final_items = list(consolidated_items.values())
+
                 trays_export.append({
                     "tray_id": clean_tray_id,
                     "occupancy_pct": round(get_occ(t), 2),
-                    "item_count": len(t.items),
-                    "items": items_export,
+                    "item_count": len(final_items),
+                    "items": final_items,
                 })
 
             kpi_dict = {

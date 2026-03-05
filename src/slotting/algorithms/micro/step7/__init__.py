@@ -42,6 +42,12 @@ def build_tray_plans(
             )
             trays.extend(subgroup_trays)
             total_trays += len(subgroup_trays)
+            if total_trays > config.max_trays:
+                excess = total_trays - config.max_trays
+                print(f"⚠️ [Recorte] Se excedió el límite. Recortando de {total_trays} a {config.max_trays} bandejas.")
+                trays = trays[: len(trays) - excess]
+                total_trays = config.max_trays
+                break
         plans.append(TrayPlan(group_id=group.seed_sku_id, subgroups=subgroups, trays=trays))
 
     if config.unassigned_include:
@@ -64,6 +70,12 @@ def build_tray_plans(
                 )
                 extra_trays.extend(subgroup_trays)
                 total_trays += len(subgroup_trays)
+                if total_trays > config.max_trays:
+                    excess = total_trays - config.max_trays
+                    print(f"⚠️ [Recorte] Se excedió el límite. Recortando de {total_trays} a {config.max_trays} bandejas.")
+                    extra_trays = extra_trays[: len(extra_trays) - excess]
+                    total_trays = config.max_trays
+                    break
             plans.append(
                 TrayPlan(
                     group_id="unassigned",

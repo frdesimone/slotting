@@ -357,6 +357,10 @@ def _append_extra_trays_if_needed(
             )
             if extra_tray.items:
                 trays.append(extra_tray)
+                if len(trays) > max_trays_limit:
+                    print(f"⚠️ [Recorte] Se excedió el límite. Recortando de {len(trays)} a {max_trays_limit} bandejas.")
+                    trays = trays[:max_trays_limit]
+                    break
             else:
                 break
     return trays

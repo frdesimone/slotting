@@ -228,10 +228,10 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         ("Código de SKU", id_col),
         ("Descripción del SKU", col_d),
         ("Peso (kg)", col_p),
-        ("Alto (m)", col_main_h),
-        ("Largo (m)", col_main_l),
-        ("Ancho (m)", col_main_w),
-        ("Volumen de caja", col_cajas),
+        ("Alto (cm)", col_main_h),
+        ("Largo (cm)", col_main_l),
+        ("Ancho (cm)", col_main_w),
+        ("UM venta a UM reposición", col_cajas),
         ("Categoría", col_cat),
     ]
     print("\n🔍 [DEBUG COLUMNAS MAESTRO - MAPEO EXACTO]")
@@ -257,10 +257,10 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             "Descripción del SKU": str(row[col_d]) if col_d and col_d in row.index else "",
             "Volumen Calculado (m3)": vol_calc if (h_s > 0 and w_s > 0 and l_s > 0) else "",
             "Peso (kg)": row[col_p] if col_p and col_p in row.index else "",
-            "Alto (m)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
-            "Largo (m)": row[col_main_l] if col_main_l and col_main_l in row.index else "",
-            "Ancho (m)": row[col_main_w] if col_main_w and col_main_w in row.index else "",
-            "Volumen de caja": row[col_cajas] if col_cajas and col_cajas in row.index else "",
+            "Alto (cm)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
+            "Largo (cm)": row[col_main_l] if col_main_l and col_main_l in row.index else "",
+            "Ancho (cm)": row[col_main_w] if col_main_w and col_main_w in row.index else "",
+            "UM venta a UM reposición": row[col_cajas] if col_cajas and col_cajas in row.index else "",
             "Categoría": str(row[col_cat]) if col_cat and col_cat in row.index else "",
         })
     validation = DataValidation(found_columns=found_columns, missing_columns=missing_columns, sample_data=sample_data)

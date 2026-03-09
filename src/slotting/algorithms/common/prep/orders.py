@@ -28,7 +28,7 @@ def load_orders_from_pedidos(
     sheet_pedidos = mapping.get("sheet_pedidos", "Pedidos").strip().lower()
     col_pedido_id = mapping.get("col_pedido_id", "Nro pedido").strip().lower()
     col_pedido_sku = mapping.get("col_pedido_sku", "Codigo II - Producto").strip().lower()
-    col_pedido_cant = mapping.get("col_pedido_cant", "Cantidad unidades").strip().lower()
+    col_pedido_cant = mapping.get("col_pedido_cant", "Cantidad UM de venta").strip().lower()
     col_pedido_fecha = mapping.get("col_pedido_fecha", "Fecha").strip().lower()
 
     print(f"📂 [Orders Loader] Procesando órdenes...")
@@ -99,7 +99,7 @@ def load_orders_from_pedidos(
     LOGICAL_COLS_PEDIDOS = [
         ("Nro pedido", id_col),
         ("Código SKU", sku_col),
-        ("Cantidad", cant_col),
+        ("Cantidad UM de venta", cant_col),
         ("Fecha", fecha_col),
     ]
     found_columns = [name for name, col in LOGICAL_COLS_PEDIDOS if col]
@@ -109,7 +109,7 @@ def load_orders_from_pedidos(
         sample_data.append({
             "Nro pedido": str(row[id_col]) if id_col in row.index else "",
             "Código SKU": str(row[sku_col]) if sku_col in row.index else "",
-            "Cantidad": row[cant_col] if cant_col and cant_col in row.index else "",
+            "Cantidad UM de venta": row[cant_col] if cant_col and cant_col in row.index else "",
             "Fecha": str(row[fecha_col]) if fecha_col and fecha_col in row.index else "",
         })
     stats.pedidos_validation = DataValidation(

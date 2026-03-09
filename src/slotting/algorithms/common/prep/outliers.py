@@ -5,6 +5,8 @@ Sistema 100% dinámico basado en reglas configurables.
 from __future__ import annotations
 from typing import List, Dict, Any
 
+import numpy as np
+
 from slotting.algorithms.common.prep.codes import SkuRecord
 from slotting.models.order import Order
 
@@ -49,23 +51,44 @@ def detect_outliers(
         attribute = rule.get("attribute", "")
         min_val = float(rule.get("min_val", 0))
         max_val = float(rule.get("max_val", float("inf")))
+        rule_type = rule.get("rule_type", "absolute")
 
         items: List[Dict[str, Any]] = []
 
         if target == "sku":
             if attribute == "frequency":
+                freqs = list(sku_frequency.values())
+                if rule_type == "percentile" and freqs:
+                    lower_bound = np.percentile(freqs, min_val)
+                    upper_bound = np.percentile(freqs, max_val)
+                else:
+                    lower_bound, upper_bound = min_val, max_val
                 for sku_id, freq in sku_frequency.items():
-                    if freq < min_val or freq > max_val:
+                    if freq < lower_bound or freq > upper_bound:
                         sku = sku_by_id.get(sku_id)
-                        desc = (getattr(sku, "description", None) or "") if sku else ""
                         items.append({
                             "sku_id": sku_id,
-                            "description": desc,
+                            "description": (getattr(sku, "description", None) or "") if sku else "",
                             "value": freq,
                             "count": sku_appearances.get(sku_id, 0),
                         })
                 items.sort(key=lambda x: x["value"], reverse=True)
             else:
+                valid_vals = []
+                for sku in skus:
+                    val = getattr(sku, attribute, None)
+                    if val is not None:
+                        try:
+                            valid_vals.append(float(val))
+                        except (TypeError, ValueError):
+                            pass
+
+                if rule_type == "percentile" and valid_vals:
+                    lower_bound = np.percentile(valid_vals, min_val)
+                    upper_bound = np.percentile(valid_vals, max_val)
+                else:
+                    lower_bound, upper_bound = min_val, max_val
+
                 for sku in skus:
                     val = getattr(sku, attribute, None)
                     if val is None:
@@ -74,25 +97,33 @@ def detect_outliers(
                         v = float(val)
                     except (TypeError, ValueError):
                         continue
-                    if v < min_val or v > max_val:
+
+                    if v < lower_bound or v > upper_bound:
                         items.append({
                             "sku_id": sku.sku_id,
                             "description": getattr(sku, "description", "") or "",
                             "value": v,
                         })
+                items.sort(key=lambda x: x["value"], reverse=True)
 
         elif target == "order":
-            if attribute == "lines" or attribute == "sku_count" or not attribute:
-                attr_val = "lines" if attribute == "sku_count" else (attribute or "lines")
-                for order in orders:
-                    lines = len(order.sku_ids)
-                    if lines < min_val or lines > max_val:
-                        items.append({
-                            "order_id": order.order_id,
-                            "description": f"Pedido con {lines} líneas",
-                            "value": lines,
-                        })
-                items.sort(key=lambda x: x["value"], reverse=True)
+            attribute = attribute or "lines"
+            lines_list = [len(o.sku_ids) for o in orders]
+            if rule_type == "percentile" and lines_list:
+                lower_bound = np.percentile(lines_list, min_val)
+                upper_bound = np.percentile(lines_list, max_val)
+            else:
+                lower_bound, upper_bound = min_val, max_val
+
+            for order in orders:
+                lines = len(order.sku_ids)
+                if lines < lower_bound or lines > upper_bound:
+                    items.append({
+                        "order_id": order.order_id,
+                        "description": f"Pedido con {lines} líneas",
+                        "value": lines,
+                    })
+            items.sort(key=lambda x: x["value"], reverse=True)
 
         result[rule_id] = {"target": target, "name": rule_name, "attribute": attribute, "items": items}
 

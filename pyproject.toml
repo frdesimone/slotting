@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Algoritmo de slotting"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "xlsxwriter>=3.0.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

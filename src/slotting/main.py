@@ -207,7 +207,7 @@ async def detectar_outliers_endpoint(
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
-    col_pedido_cant: str = Form("Cantidad unidades"),
+    col_pedido_cant: str = Form("Cantidad UM de venta"),
     
     token: str = Depends(verificar_token)
 ):
@@ -318,18 +318,18 @@ def download_template(mapping: dict = Body(...)):
     cols_maestro = [
         mapping.get("col_sku_maestro", "Material"),
         mapping.get("col_desc", "Descripción"),
-        mapping.get("col_peso", "KG/UMB"),
-        mapping.get("col_alto", "Alto"),
-        mapping.get("col_ancho", "Ancho"),
-        mapping.get("col_largo", "Largo"),
-        mapping.get("col_cajas_m3", "Cajas/M3"),
+        mapping.get("col_peso", "Peso (KG)"),
+        mapping.get("col_alto", "Alto (CM)"),
+        mapping.get("col_ancho", "Ancho (CM)"),
+        mapping.get("col_largo", "Largo (CM)"),
+        mapping.get("col_cajas_m3", "UM venta a UM reposición"),
         mapping.get("col_categoria", "Categoría"),
     ]
 
     cols_pedidos = [
         mapping.get("col_pedido_id", "Nro pedido"),
         mapping.get("col_pedido_sku", "Codigo II - Producto"),
-        mapping.get("col_pedido_cant", "Cantidad unidades"),
+        mapping.get("col_pedido_cant", "Cantidad UM de venta"),
         mapping.get("col_pedido_fecha", "Fecha"),
     ]
 
@@ -374,7 +374,7 @@ async def ejecutar_macro(
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
-    col_pedido_cant: str = Form("Cantidad unidades"),
+    col_pedido_cant: str = Form("Cantidad UM de venta"),
     
     token: str = Depends(verificar_token),
     db: Session = Depends(get_db)
@@ -550,7 +550,7 @@ async def ejecutar_micro(
             "sheet_pedidos": "Pedidos",
             "col_pedido_id": "Nro pedido",
             "col_pedido_sku": "Codigo II - Producto",
-            "col_pedido_cant": "Cantidad unidades",
+            "col_pedido_cant": "Cantidad UM de venta",
         }
         for k, v in defaults.items():
             if k not in mapping_config:

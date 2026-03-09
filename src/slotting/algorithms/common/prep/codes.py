@@ -82,12 +82,12 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
     sheet_base = clean_text(mapping.get("sheet_maestro", "Base Cód."))
     col_sku = clean_text(mapping.get("col_sku_maestro", "Material"))
-    col_peso = clean_text(mapping.get("col_peso", "KG/UMB"))
-    col_alto = clean_text(mapping.get("col_alto", "Alto"))
-    col_ancho = clean_text(mapping.get("col_ancho", "Ancho"))
-    col_largo = clean_text(mapping.get("col_largo", "Largo"))
+    col_peso = clean_text(mapping.get("col_peso", "Peso (KG)"))
+    col_alto = clean_text(mapping.get("col_alto", "Alto (CM)"))
+    col_ancho = clean_text(mapping.get("col_ancho", "Ancho (CM)"))
+    col_largo = clean_text(mapping.get("col_largo", "Largo (CM)"))
     col_desc = clean_text(mapping.get("col_desc", "Descripción"))
-    col_cajas_m3 = clean_text(mapping.get("col_cajas_m3", "Cajas/M3"))
+    col_cajas_m3 = clean_text(mapping.get("col_cajas_m3", "UM venta a UM reposición"))
     col_categoria = clean_text(mapping.get("col_categoria", "Categoría"))
     
     should_close_xls = False
@@ -173,13 +173,13 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         return None
 
     id_col = get_col("col_sku_maestro", "Material") or next((c for c in ["material", "código", "codigo ii"] if c in df.columns), None)
-    col_p = get_col("col_peso", "KG/UMB")
+    col_p = get_col("col_peso", "Peso (KG)")
     col_d = get_col("col_desc", "Descripción")
-    col_cajas = get_col("col_cajas_m3", "Cajas/M3")
+    col_cajas = get_col("col_cajas_m3", "UM venta a UM reposición")
     col_cat = get_col("col_categoria", "Categoría")
-    col_main_h = get_col("col_alto", "Alto")
-    col_main_w = get_col("col_ancho", "Ancho")
-    col_main_l = get_col("col_largo", "Largo")
+    col_main_h = get_col("col_alto", "Alto (CM)")
+    col_main_w = get_col("col_ancho", "Ancho (CM)")
+    col_main_l = get_col("col_largo", "Largo (CM)")
 
     def safe_float(val):
         if pd.isna(val) or val is None: return 0.0
@@ -198,7 +198,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         sku_id = clean_sku_id(row[id_col]) # Limpiamos ID principal
         if not sku_id or sku_id.lower() in ["nan", "none"]: continue
 
-        # Leer dimensiones primero (alto, ancho, largo en mm)
+        # Leer dimensiones primero (alto, ancho, largo en cm)
         h = safe_float(row[col_main_h]) if col_main_h else 0.0
         w = safe_float(row[col_main_w]) if col_main_w else 0.0
         l = safe_float(row[col_main_l]) if col_main_l else 0.0
@@ -208,8 +208,8 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             if w == 0: w = fw
             if l == 0: l = fl
 
-        # Volumen calculado: Alto * Ancho * Largo (mm³ -> m³)
-        vol_m3 = (h * w * l) / 1e9 if (h > 0 and w > 0 and l > 0) else 0.0
+        # Volumen calculado: Alto * Ancho * Largo (cm -> m: /100 cada dimensión)
+        vol_m3 = (h / 100.0) * (w / 100.0) * (l / 100.0) if (h > 0 and w > 0 and l > 0) else 0.0
 
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
         description = safe_str(row[col_d]) if col_d else ""
@@ -251,11 +251,11 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         h_s = safe_float(row.get(col_main_h, 0)) if col_main_h else 0.0
         w_s = safe_float(row.get(col_main_w, 0)) if col_main_w else 0.0
         l_s = safe_float(row.get(col_main_l, 0)) if col_main_l else 0.0
-        vol_calc = h_s * w_s * l_s
+        vol_calc = (h_s / 100.0) * (w_s / 100.0) * (l_s / 100.0) if (h_s > 0 and w_s > 0 and l_s > 0) else 0.0
         sample_data.append({
             "Código de SKU": str(row[id_col]) if id_col and id_col in row.index else "",
             "Descripción del SKU": str(row[col_d]) if col_d and col_d in row.index else "",
-            "Volumen Calculado (m3)": (vol_calc / 1e9) if (h_s > 0 and w_s > 0 and l_s > 0) else "",
+            "Volumen Calculado (m3)": vol_calc if (h_s > 0 and w_s > 0 and l_s > 0) else "",
             "Peso (kg)": row[col_p] if col_p and col_p in row.index else "",
             "Alto (m)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
             "Largo (m)": row[col_main_l] if col_main_l and col_main_l in row.index else "",

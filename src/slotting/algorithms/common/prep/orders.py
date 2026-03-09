@@ -144,6 +144,7 @@ def load_orders_from_pedidos(
         units_by_sku[s_id] += units
         stats.kept_rows += 1
 
+    stats.total_units = sum(units_by_sku.values())
     orders = [Order(order_id=o, sku_ids=sorted(s)) for o, s in order_items.items()]
     stats.total_orders = len(orders)
 

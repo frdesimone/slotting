@@ -18,6 +18,7 @@ class OrderLoadStats:
     skipped_missing_fields: int = 0
     skipped_missing_master: int = 0
     total_orders: int = 0
+    total_units: float = 0.0  # Suma de cantidades (qty) de la columna de cantidades
     period_days: float = 180.0
     maestro_validation: DataValidation | None = None
     pedidos_validation: DataValidation | None = None

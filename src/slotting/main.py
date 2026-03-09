@@ -274,14 +274,12 @@ async def detectar_outliers_endpoint(
         # --- CÁLCULO DE RESUMEN GENERAL ---
         total_skus = len(skus_list)
         total_pedidos = len(orders)
-        total_unidades = 0
-        total_lineas = 0
+        order_stats = getattr(stats, "order_stats", None)
+        total_lineas = int(order_stats.kept_rows) if order_stats else 0  # Renglones del pedido
+        total_unidades = float(order_stats.total_units) if order_stats else 0.0  # Suma de cantidades (qty)
         total_kg = 0.0
 
         for o in orders:
-            unique_skus = set(o.sku_ids)
-            total_lineas += len(unique_skus)
-            total_unidades += len(o.sku_ids)
             for sid in o.sku_ids:
                 sku_obj = sku_by_id.get(sid)
                 if sku_obj and getattr(sku_obj, "weight", None):
@@ -295,7 +293,7 @@ async def detectar_outliers_endpoint(
         summary_stats = {
             "total_skus": total_skus,
             "total_pedidos": total_pedidos,
-            "total_unidades": total_unidades,
+            "total_unidades": int(total_unidades) if total_unidades == int(total_unidades) else round(total_unidades, 2),
             "total_lineas": total_lineas,
             "lineas_por_pedido": round(lineas_por_pedido, 2),
             "total_kg": round(total_kg, 2),
@@ -479,7 +477,10 @@ async def ejecutar_macro(
         ]
         print(json.dumps(debug_list, indent=2, default=str))
 
-        config = MacroSlottingConfig(storage_types=st_list, abc_thresholds=(0.80, 0.95))
+        from slotting.models.storage import StorageConfig
+
+        storage_configs = [StorageConfig.from_dict(st) for st in st_list]
+        config = MacroSlottingConfig(storage_types=storage_configs, abc_thresholds=(0.80, 0.95))
         results = run_macro_slotting(skus_list, config)
 
         sku_by_id = {s.sku_id: s for s in skus_list}
@@ -491,47 +492,71 @@ async def ejecutar_macro(
         }
 
         vlm_skus_details = []
-        for st in st_list:
-            st_name = st["name"]
+        for st in storage_configs:
+            st_name = st.name
             st_results = [r for r in results if r.storage_type == st_name]
-            st_vol_used = sum(getattr(r, 'cycle_volume', 0) for r in st_results)
-            st_target = float(st.get("capacity", 0)) * float(st.get("occupancy", 1))
+            st_vol_used = sum(getattr(r, "cycle_volume", 0) for r in st_results)
+            st_target = st.effective_capacity_m3()
+            st_weight_allocated = sum(getattr(r, "total_weight", 0) for r in st_results)
             fill_pct = (st_vol_used / st_target) * 100 if st_target > 0 else 0
-            
+            occupancy_pct_real = fill_pct
+
             kpi_dict["allocations"][st_name] = {
                 "skus_count": len(st_results),
                 "volume_used": round(st_vol_used, 2),
                 "volume_target": round(st_target, 2),
-                "fill_percentage": round(fill_pct, 1)
+                "fill_percentage": round(fill_pct, 1),
+                "total_weight_allocated": round(st_weight_allocated, 2),
+                "occupancy_pct_real": round(occupancy_pct_real, 1),
             }
-            
-            vlm_skus_details.extend([{
-                "sku_id": r.sku_id, "storage_type": r.storage_type,
-                "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
-                "description": getattr(r, 'description', '') or '',
-                "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
-                "category": getattr(r, 'category', '') or '',
-                "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
-                "height": getattr(sku_by_id.get(r.sku_id), 'height', None),
-                "width": getattr(sku_by_id.get(r.sku_id), 'width', None),
-                "length": getattr(sku_by_id.get(r.sku_id), 'length', None),
-            } for r in st_results])
+
+            vlm_skus_details.extend(
+                [
+                    {
+                        "sku_id": r.sku_id,
+                        "storage_type": r.storage_type,
+                        "vol_cycle": getattr(r, "cycle_volume", 0.0),
+                        "abc_class": getattr(r, "abc_class", "N/A"),
+                        "description": getattr(r, "description", "") or "",
+                        "boxes_per_m3": getattr(r, "boxes_per_m3", 0.0) or 0.0,
+                        "category": getattr(r, "category", "") or "",
+                        "weight": getattr(sku_by_id.get(r.sku_id), "weight", None) or 0.0,
+                        "height": getattr(r, "height", None) or getattr(sku_by_id.get(r.sku_id), "height", None),
+                        "width": getattr(r, "width", None) or getattr(sku_by_id.get(r.sku_id), "width", None),
+                        "length": getattr(r, "length", None) or getattr(sku_by_id.get(r.sku_id), "length", None),
+                        "total_weight": getattr(r, "total_weight", 0) or 0,
+                        "total_vol": getattr(r, "total_vol", 0) or 0,
+                        "replenishment_units": getattr(r, "replenishment_units", 0) or 0,
+                    }
+                    for r in st_results
+                ]
+            )
 
         unassigned = [r for r in results if r.storage_type == "UNASSIGNED"]
         kpi_dict["unassigned_count"] = len(unassigned)
-        vlm_skus_details.extend([{
-            "sku_id": r.sku_id, "storage_type": r.storage_type,
-            "vol_cycle": getattr(r, 'cycle_volume', 0.0), "abc_class": getattr(r, 'abc_class', 'N/A'),
-            "description": getattr(r, 'description', '') or '',
-            "boxes_per_m3": getattr(r, 'boxes_per_m3', 0.0) or 0.0,
-            "category": getattr(r, 'category', '') or '',
-            "weight": getattr(sku_by_id.get(r.sku_id), 'weight', None) or 0.0,
-            "height": getattr(sku_by_id.get(r.sku_id), 'height', None),
-            "width": getattr(sku_by_id.get(r.sku_id), 'width', None),
-            "length": getattr(sku_by_id.get(r.sku_id), 'length', None),
-        } for r in unassigned])
+        vlm_skus_details.extend(
+            [
+                {
+                    "sku_id": r.sku_id,
+                    "storage_type": r.storage_type,
+                    "vol_cycle": getattr(r, "cycle_volume", 0.0),
+                    "abc_class": getattr(r, "abc_class", "N/A"),
+                    "description": getattr(r, "description", "") or "",
+                    "boxes_per_m3": getattr(r, "boxes_per_m3", 0.0) or 0.0,
+                    "category": getattr(r, "category", "") or "",
+                    "weight": getattr(sku_by_id.get(r.sku_id), "weight", None) or 0.0,
+                    "height": getattr(r, "height", None) or getattr(sku_by_id.get(r.sku_id), "height", None),
+                    "width": getattr(r, "width", None) or getattr(sku_by_id.get(r.sku_id), "width", None),
+                    "length": getattr(r, "length", None) or getattr(sku_by_id.get(r.sku_id), "length", None),
+                    "total_weight": getattr(r, "total_weight", 0) or 0,
+                    "total_vol": getattr(r, "total_vol", 0) or 0,
+                    "replenishment_units": getattr(r, "replenishment_units", 0) or 0,
+                }
+                for r in unassigned
+            ]
+        )
 
-        params_dict = {"storage_types": st_list}
+        params_dict = {"storage_types": [s.to_dict() for s in storage_configs]}
         exec_id = save_macro_execution(db, CURRENT_USER_ID, params_dict, kpi_dict, vlm_skus_details)
 
         response_data = {

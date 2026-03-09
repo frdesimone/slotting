@@ -82,7 +82,6 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
     sheet_base = clean_text(mapping.get("sheet_maestro", "Base Cód."))
     col_sku = clean_text(mapping.get("col_sku_maestro", "Material"))
-    col_vol = clean_text(mapping.get("col_volumen", "M3/UMB"))
     col_peso = clean_text(mapping.get("col_peso", "KG/UMB"))
     col_alto = clean_text(mapping.get("col_alto", "Alto"))
     col_ancho = clean_text(mapping.get("col_ancho", "Ancho"))
@@ -146,7 +145,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         row_str = [clean_text(val) for val in row.values if pd.notna(val)]
         has_id_exact = any(col_sku == k for k in row_str)
         has_id_sub = any(col_sku in k for k in row_str)
-        has_metric = any(col_vol in k or col_peso in k for k in row_str)
+        has_metric = any(col_peso in k for k in row_str)
         if has_id_exact or (has_id_sub and has_metric):
             header_idx = i
             header_found = True
@@ -174,7 +173,6 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         return None
 
     id_col = get_col("col_sku_maestro", "Material") or next((c for c in ["material", "código", "codigo ii"] if c in df.columns), None)
-    col_v = get_col("col_volumen", "M3/UMB")
     col_p = get_col("col_peso", "KG/UMB")
     col_d = get_col("col_desc", "Descripción")
     col_cajas = get_col("col_cajas_m3", "Cajas/M3")
@@ -199,24 +197,25 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     for _, row in df.iterrows():
         sku_id = clean_sku_id(row[id_col]) # Limpiamos ID principal
         if not sku_id or sku_id.lower() in ["nan", "none"]: continue
-            
-        vol_m3 = safe_float(row[col_v]) if col_v else 0.0
+
+        # Leer dimensiones primero (alto, ancho, largo en mm)
+        h = safe_float(row[col_main_h]) if col_main_h else 0.0
+        w = safe_float(row[col_main_w]) if col_main_w else 0.0
+        l = safe_float(row[col_main_l]) if col_main_l else 0.0
+        if h == 0 or w == 0 or l == 0:
+            fh, fw, fl = dimensions_lookup.get(sku_id, (0.0, 0.0, 0.0))
+            if h == 0: h = fh
+            if w == 0: w = fw
+            if l == 0: l = fl
+
+        # Volumen calculado: Alto * Ancho * Largo (mm³ -> m³)
+        vol_m3 = (h * w * l) / 1e9 if (h > 0 and w > 0 and l > 0) else 0.0
+
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
         description = safe_str(row[col_d]) if col_d else ""
         m3_per_box = safe_float(row[col_cajas]) if col_cajas else 0.0
         boxes_per_m3 = (1.0 / m3_per_box) if m3_per_box > 0 else 0.0
         category = safe_str(row[col_cat]) if col_cat else ""
-        
-        # Lógica de dimensiones independientes: si una falla, las otras se leen igual
-        h, w, l = 0.0, 0.0, 0.0
-        if col_main_h: h = safe_float(row[col_main_h])
-        if col_main_w: w = safe_float(row[col_main_w])
-        if col_main_l: l = safe_float(row[col_main_l])
-        if h == 0 or w == 0 or l == 0:
-            fh, fw, fl = dimensions_lookup.get(sku_id, ((vol_m3**(1/3))*1000 if vol_m3>0 else 0,)*3)
-            if h == 0: h = fh
-            if w == 0: w = fw
-            if l == 0: l = fl
 
         records[sku_id] = SkuRecord(
             sku_id=sku_id, avg_units_per_line=None, volume=vol_m3, weight=weight_kg,
@@ -228,7 +227,6 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     LOGICAL_COLS_MAESTRO = [
         ("Código de SKU", id_col),
         ("Descripción del SKU", col_d),
-        ("Volumen (m3)", col_v),
         ("Peso (kg)", col_p),
         ("Alto (m)", col_main_h),
         ("Largo (m)", col_main_l),
@@ -250,10 +248,14 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
     sample_data = []
     for _, row in df.head(5).iterrows():
+        h_s = safe_float(row.get(col_main_h, 0)) if col_main_h else 0.0
+        w_s = safe_float(row.get(col_main_w, 0)) if col_main_w else 0.0
+        l_s = safe_float(row.get(col_main_l, 0)) if col_main_l else 0.0
+        vol_calc = h_s * w_s * l_s
         sample_data.append({
             "Código de SKU": str(row[id_col]) if id_col and id_col in row.index else "",
             "Descripción del SKU": str(row[col_d]) if col_d and col_d in row.index else "",
-            "Volumen (m3)": row[col_v] if col_v and col_v in row.index else "",
+            "Volumen Calculado (m3)": (vol_calc / 1e9) if (h_s > 0 and w_s > 0 and l_s > 0) else "",
             "Peso (kg)": row[col_p] if col_p and col_p in row.index else "",
             "Alto (m)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
             "Largo (m)": row[col_main_l] if col_main_l and col_main_l in row.index else "",

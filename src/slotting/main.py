@@ -1,3 +1,4 @@
+import io
 import os
 import shutil
 import ipaddress
@@ -6,12 +7,14 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import json
 
+import pandas as pd
+
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form, Body
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware # IMPORTANTE: Agregar esta importación
 
@@ -304,6 +307,48 @@ async def detectar_outliers_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if path_file.exists(): path_file.unlink() # Borramos el temporal
+
+
+@app.post("/api/v1/template")
+def download_template(mapping: dict = Body(...)):
+    """Genera un Excel vacío con las hojas y columnas según el mapeo actual."""
+    sheet_maestro = mapping.get("sheet_maestro", "Base Cód.").strip() or "Base Cód."
+    sheet_pedidos = mapping.get("sheet_pedidos", "Pedidos").strip() or "Pedidos"
+
+    cols_maestro = [
+        mapping.get("col_sku_maestro", "Material"),
+        mapping.get("col_desc", "Descripción"),
+        mapping.get("col_peso", "KG/UMB"),
+        mapping.get("col_alto", "Alto"),
+        mapping.get("col_ancho", "Ancho"),
+        mapping.get("col_largo", "Largo"),
+        mapping.get("col_cajas_m3", "Cajas/M3"),
+        mapping.get("col_categoria", "Categoría"),
+    ]
+
+    cols_pedidos = [
+        mapping.get("col_pedido_id", "Nro pedido"),
+        mapping.get("col_pedido_sku", "Codigo II - Producto"),
+        mapping.get("col_pedido_cant", "Cantidad unidades"),
+        mapping.get("col_pedido_fecha", "Fecha"),
+    ]
+
+    cols_maestro = [c for c in cols_maestro if c and str(c).strip()]
+    cols_pedidos = [c for c in cols_pedidos if c and str(c).strip()]
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        pd.DataFrame(columns=cols_maestro).to_excel(writer, sheet_name=sheet_maestro, index=False)
+        pd.DataFrame(columns=cols_pedidos).to_excel(writer, sheet_name=sheet_pedidos, index=False)
+    output.seek(0)
+
+    headers = {"Content-Disposition": 'attachment; filename="template_slotting.xlsx"'}
+    return StreamingResponse(
+        output,
+        headers=headers,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
 
 @app.post("/api/v1/macro")
 async def ejecutar_macro(

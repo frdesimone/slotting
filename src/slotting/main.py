@@ -82,6 +82,13 @@ class StorageTypeConfig(BaseModel):
     tray_length: float
     tray_width: float
     is_fixed_height: bool = False
+    # Paramétricos (opcionales; si faltan se derivan de tray_* y max_weight)
+    max_w: float | None = None
+    max_l: float | None = None
+    max_weight_loc: float | None = None
+    max_h_loc: float | None = None
+    max_h_storage: float | None = None
+    is_variable_height: bool | None = None
 
 
 class SkuMicroInput(BaseModel):
@@ -688,7 +695,7 @@ async def ejecutar_micro(
                 final_trays = hybrid.all_trays()
 
             if not final_trays:
-                results_by_storage[st_key] = {"kpi": {"total_trays": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": []}
+                results_by_storage[st_key] = {"kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": [], "locations": []}
                 continue
 
             total_trays = len(final_trays)
@@ -697,20 +704,30 @@ async def ejecutar_micro(
             skus_dict = {str(s.sku_id).strip(): s for s in skus_list}
             total_wasted_volume = 0.0
 
-            trays_export = []
+            # Límites de la ubicación desde storage_cfg
+            max_w = storage_cfg.max_w if storage_cfg.max_w is not None else storage_cfg.tray_width
+            max_l = storage_cfg.max_l if storage_cfg.max_l is not None else storage_cfg.tray_length
+            max_weight = storage_cfg.max_weight_loc if storage_cfg.max_weight_loc is not None else storage_cfg.max_weight
+            is_var_h = storage_cfg.is_variable_height if storage_cfg.is_variable_height is not None else (not storage_cfg.is_fixed_height)
+            max_h_loc = storage_cfg.max_h_loc if storage_cfg.max_h_loc is not None else 0.5
+            max_h_storage = storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0
+
+            max_surface = max_w * max_l
+            max_volume = max_surface * (max_h_storage if is_var_h else max_h_loc)
+
+            locations_export = []
             for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True):
-                raw_tray_id = getattr(t, 'tray_id', 'N/A')
+                raw_tray_id = getattr(t, "tray_id", "N/A")
                 clean_tray_id = str(raw_tray_id).replace("unassigned-unassigned-", f"{st_key}-1-")
                 items_export = []
                 for i in t.items:
-                    vol = getattr(i, 'total_volume', 0) or 0
-                    sku = sku_by_id.get(str(getattr(i, 'sku_id', '')).strip())
-                    desc = getattr(sku, 'description', '') if sku else ''
-                    boxes_per_m3 = getattr(sku, 'boxes_per_m3', 0) or 0 if sku else 0
+                    vol = getattr(i, "total_volume", 0) or 0
+                    sku = sku_by_id.get(str(getattr(i, "sku_id", "")).strip())
+                    desc = getattr(sku, "description", "") if sku else ""
+                    boxes_per_m3 = getattr(sku, "boxes_per_m3", 0) or 0 if sku else 0
                     boxes = vol * boxes_per_m3 if boxes_per_m3 else 0
-                    items_export.append({"sku": getattr(i, 'sku_id', ''), "vol": vol, "description": desc, "boxes": round(boxes, 2)})
+                    items_export.append({"sku": getattr(i, "sku_id", ""), "vol": vol, "description": desc, "boxes": round(boxes, 2)})
 
-                # Consolidar SKUs duplicados (mismo SKU fraccionado en varios ítems)
                 consolidated_items = {}
                 for item in items_export:
                     sku_id = item.get("sku")
@@ -726,34 +743,73 @@ async def ejecutar_micro(
                         consolidated_items[sku_id]["height"] = height
                 final_items = list(consolidated_items.values())
 
-                # Cálculo del desperdicio por diferencias de altura
                 tray_max_height = max([i.get("height", 0.0) for i in final_items], default=0.0)
                 tray_wasted_vol = 0.0
                 for i in final_items:
                     h = i.get("height", 0.0)
-                    if h > 0:
-                        base_area = i["vol"] / h
-                        wasted = base_area * (tray_max_height - h)
+                    if h > 0 and tray_max_height > h:
+                        base_area_m2 = i["vol"] / (h / 100.0)
+                        wasted = base_area_m2 * ((tray_max_height - h) / 100.0)
                         tray_wasted_vol += wasted
                 total_wasted_volume += tray_wasted_vol
 
-                trays_export.append({
-                    "tray_id": clean_tray_id,
+                location_weight = 0.0
+                location_surface = 0.0
+                location_volume = 0.0
+                location_items = []
+                for item in final_items:
+                    sku_id = item.get("sku")
+                    sku_obj = skus_dict.get(str(sku_id).strip()) if sku_id else None
+                    if not sku_obj:
+                        continue
+                    qty = item.get("boxes", 0.0)
+                    unit_w = (float(sku_obj.width or 0) / 100.0)
+                    unit_l = (float(sku_obj.length or 0) / 100.0)
+                    unit_h = (float(sku_obj.height or 0) / 100.0)
+                    unit_weight = float(getattr(sku_obj, "weight", 0) or 0)
+
+                    item_surface = (unit_w * unit_l) * qty
+                    item_vol = item.get("vol", (unit_w * unit_l * unit_h) * qty)
+                    item_total_weight = unit_weight * qty
+
+                    location_weight += item_total_weight
+                    location_surface += item_surface
+                    location_volume += item_vol
+
+                    location_items.append({
+                        "sku": sku_id,
+                        "description": item.get("description", ""),
+                        "weight": round(item_total_weight, 2),
+                        "surface": round(item_surface, 4),
+                        "volume": round(item_vol, 4),
+                        "replenishment_units": round(qty, 2),
+                    })
+
+                locations_export.append({
+                    "location_id": clean_tray_id,
                     "occupancy_pct": round(get_occ(t), 2),
-                    "item_count": len(final_items),
-                    "items": final_items,
                     "max_height": tray_max_height,
                     "wasted_vol": tray_wasted_vol,
+                    "metrics": {
+                        "used_weight": round(location_weight, 2),
+                        "max_weight": round(max_weight, 2),
+                        "used_surface": round(location_surface, 4),
+                        "max_surface": round(max_surface, 4),
+                        "used_volume": round(location_volume, 4),
+                        "max_volume": round(max_volume, 4),
+                    },
+                    "items": location_items,
                 })
 
             kpi_dict = {
                 "total_trays": total_trays,
+                "total_locations": total_trays,
                 "skus_placed": len(skus_for_storage),
                 "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
                 "total_wasted_vol": total_wasted_volume,
             }
-            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": trays_export}
+            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export}
             print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs.")
 
         params_dict = {
@@ -768,7 +824,7 @@ async def ejecutar_micro(
             "weight_height": payload_data.weights.height,
             "storages": [s.model_dump() for s in payload_data.storages],
         }
-        all_trays = [t for r in results_by_storage.values() for t in r.get("best_trays", [])]
+        all_trays = [loc for r in results_by_storage.values() for loc in r.get("locations", r.get("best_trays", []))]
         total_trays_agg = sum(r["kpi"].get("total_trays", 0) for r in results_by_storage.values())
         avg_occ_list = [r["kpi"].get("avg_area_occupancy_pct", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
         agg_kpi = {

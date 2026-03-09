@@ -271,6 +271,36 @@ async def detectar_outliers_endpoint(
         report = detect_outliers(skus_list, orders, rules=rules_list)
         sku_by_id = {s.sku_id: s for s in skus_list}
 
+        # --- CÁLCULO DE RESUMEN GENERAL ---
+        total_skus = len(skus_list)
+        total_pedidos = len(orders)
+        total_unidades = 0
+        total_lineas = 0
+        total_kg = 0.0
+
+        for o in orders:
+            unique_skus = set(o.sku_ids)
+            total_lineas += len(unique_skus)
+            total_unidades += len(o.sku_ids)
+            for sid in o.sku_ids:
+                sku_obj = sku_by_id.get(sid)
+                if sku_obj and getattr(sku_obj, "weight", None):
+                    try:
+                        total_kg += float(sku_obj.weight)
+                    except (ValueError, TypeError):
+                        pass
+
+        lineas_por_pedido = total_lineas / total_pedidos if total_pedidos > 0 else 0.0
+
+        summary_stats = {
+            "total_skus": total_skus,
+            "total_pedidos": total_pedidos,
+            "total_unidades": total_unidades,
+            "total_lineas": total_lineas,
+            "lineas_por_pedido": round(lineas_por_pedido, 2),
+            "total_kg": round(total_kg, 2),
+        }
+
         def sku_desc(sku) -> str:
             return (getattr(sku, "description", None) or "") if sku else ""
 
@@ -290,6 +320,7 @@ async def detectar_outliers_endpoint(
             categories.append({"id": rule_id, "name": name, "target": target, "attribute": attribute, "items": enriched})
         response_data = {
             "status": "success",
+            "summary": summary_stats,
             "categories": categories,
             "validation": {
                 "maestro": stats.maestro_validation.__dict__ if getattr(stats, "maestro_validation", None) else None,

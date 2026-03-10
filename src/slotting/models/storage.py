@@ -22,6 +22,8 @@ class StorageConfig:
     max_h_storage: float = 0.0
     categories: list[str] = field(default_factory=list)
     priority: int = 99  # Para ordenamiento; 1 = más prioritario
+    is_multiproduct: bool = True  # True = mezcla de productos; False = monoproducto
+    stackability_factor: int = 1  # Factor de apilabilidad
     max_vol_per_sku: float = float("inf")  # Límite volumen por SKU (legacy: max_volume)
     capacity_m3: float = 0.0  # Legacy: capacidad total en m³; si > 0 se usa en vez de num_locations*dims
 
@@ -72,6 +74,8 @@ class StorageConfig:
             "cycle_vol_limit": self.cycle_vol_limit,
             "categories": self.categories,
             "priority": self.priority,
+            "is_multiproduct": self.is_multiproduct,
+            "stackability_factor": self.stackability_factor,
         }
 
     @classmethod
@@ -112,6 +116,8 @@ class StorageConfig:
                 categories=_parse_categories(d.get("categories", [])),
                 priority=int(d.get("priority", 99)),
                 max_vol_per_sku=max_vol,
+                is_multiproduct=bool(d.get("is_multiproduct", True)),
+                stackability_factor=int(d.get("stackability_factor", 1)),
             )
 
         # Formato legacy (capacity, occupancy, max_volume, etc.)
@@ -140,6 +146,8 @@ class StorageConfig:
             priority=int(d.get("priority", 99)),
             max_vol_per_sku=max_vol,
             capacity_m3=capacity,
+            is_multiproduct=bool(d.get("is_multiproduct", True)),
+            stackability_factor=int(d.get("stackability_factor", 1)),
         )
 
 

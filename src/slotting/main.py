@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import shutil
 import ipaddress
@@ -82,6 +83,8 @@ class StorageTypeConfig(BaseModel):
     tray_length: float
     tray_width: float
     is_fixed_height: bool = False
+    is_multiproduct: bool | None = None
+    stackability_factor: int | None = None
     # Paramétricos (opcionales; si faltan se derivan de tray_* y max_weight)
     max_w: float | None = None
     max_l: float | None = None
@@ -671,6 +674,11 @@ async def ejecutar_micro(
                 group_score_wa=payload_data.weights.affinity,
                 group_score_wr=payload_data.weights.rotation,
                 group_score_wh=weight_height,
+                is_multiproduct=storage_cfg.is_multiproduct if storage_cfg.is_multiproduct is not None else True,
+                stackability_factor=storage_cfg.stackability_factor if storage_cfg.stackability_factor is not None else 1,
+                is_variable_height=storage_cfg.is_variable_height if storage_cfg.is_variable_height is not None else False,
+                max_h_loc=storage_cfg.max_h_loc if storage_cfg.max_h_loc is not None else 0.5,
+                max_h_storage=storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0,
             )
 
             # Ejecutar motor Micro
@@ -768,7 +776,28 @@ async def ejecutar_micro(
                     unit_h = (float(sku_obj.height or 0) / 100.0)
                     unit_weight = float(getattr(sku_obj, "weight", 0) or 0)
 
-                    item_surface = (unit_w * unit_l) * qty
+                    is_var_h = storage_cfg.is_variable_height if storage_cfg.is_variable_height is not None else False
+                    max_h_loc = storage_cfg.max_h_loc if storage_cfg.max_h_loc is not None else 0.5
+                    max_h_storage = storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0
+                    stack_factor = storage_cfg.stackability_factor if storage_cfg.stackability_factor is not None else 1
+                    if is_var_h:
+                        current_max_h = max(
+                            [skus_dict.get(str(i.get("sku")).strip()).height for i in final_items if skus_dict.get(str(i.get("sku")).strip())],
+                            default=0.0,
+                        ) / 100.0
+                        h_limit = max(current_max_h, unit_h)
+                        if max_h_storage > 0:
+                            h_limit = min(h_limit, max_h_storage)
+                    else:
+                        h_limit = max_h_loc
+
+                    max_vertical = int(h_limit // unit_h) if unit_h > 0 else 1
+                    if max_vertical < 1:
+                        max_vertical = 1
+                    actual_stack = min(stack_factor, max_vertical)
+
+                    stacks_needed = math.ceil(qty / actual_stack) if actual_stack > 0 else qty
+                    item_surface = (unit_w * unit_l) * stacks_needed
                     item_vol = item.get("vol", (unit_w * unit_l * unit_h) * qty)
                     item_total_weight = unit_weight * qty
 

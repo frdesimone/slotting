@@ -52,6 +52,11 @@ class MicroSlottingConfig:
     max_trays: int = 256
     optimizer_tray_count_weight: float = 0.2
     optimizer_area_waste_weight: float = 200.0
+    is_multiproduct: bool = True
+    stackability_factor: int = 1
+    is_variable_height: bool = False
+    max_h_loc: float = 0.0
+    max_h_storage: float = 0.0
 
     def __post_init__(self) -> None:
         self._validate_strategy_inputs()

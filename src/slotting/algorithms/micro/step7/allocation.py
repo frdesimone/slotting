@@ -28,6 +28,7 @@ def build_trays_for_subgroup(
         target_area=context["target_area"],
         max_area=context["max_area"],
         max_weight=context["max_weight"],
+        config=config,
     )
     _fill_trays_to_capacity(
         trays=context["trays"],
@@ -39,6 +40,7 @@ def build_trays_for_subgroup(
         heights=context["heights"],
         max_area=context["max_area"],
         max_weight=context["max_weight"],
+        config=config,
     )
     trays = _append_extra_trays_if_needed(
         trays=context["trays"],
@@ -93,6 +95,7 @@ def _fill_tray_to_target(
     target_area: float,
     max_area: float,
     max_weight: float,
+    config: MicroSlottingConfig,
 ) -> None:
     """Greedy fill to a target area while respecting tray capacity."""
     desired_area = min(target_area, max_area)
@@ -107,6 +110,7 @@ def _fill_tray_to_target(
         heights=heights,
         max_area=desired_area,
         max_weight=max_weight,
+        config=config,
     )
 
 
@@ -120,6 +124,7 @@ def _fill_tray_to_capacity(
     heights: dict[str, float],
     max_area: float,
     max_weight: float,
+    config: MicroSlottingConfig,
 ) -> None:
     """Second pass to fill remaining units up to full capacity."""
     _fill_tray(
@@ -132,6 +137,7 @@ def _fill_tray_to_capacity(
         heights=heights,
         max_area=max_area,
         max_weight=max_weight,
+        config=config,
     )
 
 
@@ -145,21 +151,46 @@ def _fill_tray(
     heights: dict[str, float],
     max_area: float,
     max_weight: float,
+    config: MicroSlottingConfig,
 ) -> None:
     for sku_id in ordered_skus:
+        if not config.is_multiproduct and tray.items:
+            existing_skus = {item.sku_id for item in tray.items}
+            if existing_skus and sku_id not in existing_skus:
+                continue
+
         units_left = remaining_units.get(sku_id, 0.0)
         if units_left <= 0:
             continue
+
         area_left = max_area - tray.area_used
         weight_left = max_weight - tray.weight_used
         if area_left <= 1e-9 or weight_left <= 1e-9:
             break
+
+        unit_h = heights[sku_id]
+        # config max_h_* en m; heights en mm → convertir a mm para consistencia
+        max_h_loc_mm = config.max_h_loc * 1000.0 if config.max_h_loc > 0 else float("inf")
+        max_h_storage_mm = config.max_h_storage * 1000.0 if config.max_h_storage > 0 else float("inf")
+        if config.is_variable_height:
+            h_limit = max(tray.height, unit_h)
+            if max_h_storage_mm < float("inf"):
+                h_limit = min(h_limit, max_h_storage_mm)
+        else:
+            h_limit = max_h_loc_mm
+
+        max_vertical = int(h_limit // unit_h) if unit_h > 0 else 1
+        if max_vertical < 1:
+            max_vertical = 1
+        actual_stack = min(config.stackability_factor, max_vertical)
+
         add_units = _max_units_that_fit(
             units_left=units_left,
             area_left=area_left,
             weight_left=weight_left,
             unit_area=unit_area[sku_id],
             unit_weight=unit_weight[sku_id],
+            actual_stack=actual_stack,
         )
         if add_units <= 0:
             continue
@@ -170,7 +201,8 @@ def _fill_tray(
             unit_area=unit_area[sku_id],
             unit_weight=unit_weight[sku_id],
             unit_volume=unit_volume[sku_id],
-            height=heights[sku_id],
+            height=unit_h,
+            actual_stack=actual_stack,
         )
         remaining_units[sku_id] = units_left - add_units
 
@@ -181,12 +213,14 @@ def _max_units_that_fit(
     weight_left: float,
     unit_area: float,
     unit_weight: float,
+    actual_stack: int,
 ) -> float:
     if unit_area <= 0 and unit_weight <= 0:
         return float(math.floor(units_left))
     area_limit = units_left
     if unit_area > 0:
-        area_limit = min(area_limit, area_left / unit_area)
+        max_footprints = math.floor(area_left / unit_area)
+        area_limit = float(max_footprints * actual_stack)
     weight_limit = units_left
     if unit_weight > 0:
         weight_limit = min(weight_limit, weight_left / unit_weight)
@@ -202,8 +236,10 @@ def _add_units_to_tray(
     unit_weight: float,
     unit_volume: float,
     height: float,
+    actual_stack: int,
 ) -> None:
-    total_area = add_units * unit_area
+    stacks_needed = math.ceil(add_units / actual_stack) if actual_stack > 0 else add_units
+    total_area = stacks_needed * unit_area
     total_weight = add_units * unit_weight
     total_volume = add_units * unit_volume
     tray.area_used += total_area
@@ -285,6 +321,7 @@ def _fill_trays_to_target(
     target_area: float,
     max_area: float,
     max_weight: float,
+    config: MicroSlottingConfig,
 ) -> None:
     for tray in trays:
         _fill_tray_to_target(
@@ -298,6 +335,7 @@ def _fill_trays_to_target(
             target_area=target_area,
             max_area=max_area,
             max_weight=max_weight,
+            config=config,
         )
 
 
@@ -311,6 +349,7 @@ def _fill_trays_to_capacity(
     heights: dict[str, float],
     max_area: float,
     max_weight: float,
+    config: MicroSlottingConfig,
 ) -> None:
     if any(units > 1e-9 for units in remaining_units.values()):
         for tray in trays:
@@ -324,6 +363,7 @@ def _fill_trays_to_capacity(
                 heights=heights,
                 max_area=max_area,
                 max_weight=max_weight,
+                config=config,
             )
 
 
@@ -354,6 +394,7 @@ def _append_extra_trays_if_needed(
                 heights=heights,
                 max_area=max_area,
                 max_weight=max_weight,
+                config=config,
             )
             if extra_tray.items:
                 trays.append(extra_tray)

@@ -145,6 +145,8 @@ def run_macro_slotting(
                         category=sku_cat,
                         total_weight=total_sku_weight,
                         total_vol=total_sku_vol,
+                        sku_vol=sku_vol,
+                        actual_sales_units=actual_sales_units,
                         replenishment_units=corrected_replenishment_units,
                         width=getattr(sku, "width", 0) or 0,
                         length=getattr(sku, "length", 0) or 0,

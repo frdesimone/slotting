@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -87,8 +88,23 @@ def run_macro_slotting(
             cap_info = storage_capacity_info.get(name, {})
             max_loc_vol = cap_info.get("max_loc_vol", float("inf"))
 
-            cycle_vol = (units_per_day * cycle_days) * sku_vol
-            cycle_qty = units_per_day * cycle_days
+            cycle_qty = units_per_day * float(st.cycle_days)
+
+            # Extracción ultra-segura del ratio de cajas
+            raw_ratio = getattr(sku, "boxes_per_m3", None)
+            if raw_ratio is None or str(raw_ratio).strip() == "":
+                raw_ratio = getattr(sku, "um_ratio", 1.0)
+            try:
+                um_ratio = float(raw_ratio)
+                if math.isnan(um_ratio) or um_ratio <= 0:
+                    um_ratio = 1.0
+            except (ValueError, TypeError):
+                um_ratio = 1.0
+
+            replenishment_units = cycle_qty / um_ratio
+
+            # El volumen real es la cantidad de CAJAS físicas * el volumen de la caja
+            cycle_vol = replenishment_units * sku_vol
 
             if not debug_math_logged:
                 print(f"\n[DEBUG MATH MACRO] SKU: {sku.sku_id} -> cycle_vol: {cycle_vol}, cycle_qty: {cycle_qty}\n")
@@ -110,12 +126,8 @@ def run_macro_slotting(
 
             if usage[name] + cycle_vol <= limits[name]:
                 usage[name] += cycle_vol
-                um_ratio = getattr(sku, "boxes_per_m3", None) or getattr(sku, "um_ratio", 1.0)
-                if um_ratio <= 0:
-                    um_ratio = 1.0
-                replenishment_units = cycle_qty / um_ratio
-                total_sku_weight = cycle_qty * float(sku.weight or 0)
-                total_sku_vol = cycle_qty * sku_vol
+                total_sku_weight = replenishment_units * float(sku.weight or 0)
+                total_sku_vol = replenishment_units * sku_vol
 
                 results.append(
                     MacroResult(
@@ -125,7 +137,7 @@ def run_macro_slotting(
                         cycle_volume=cycle_vol,
                         reason=f"Fits constraints of {name}",
                         description=sku_desc,
-                        boxes_per_m3=getattr(sku, "boxes_per_m3", 0.0) or 0.0,
+                        boxes_per_m3=um_ratio,
                         category=sku_cat,
                         total_weight=total_sku_weight,
                         total_vol=total_sku_vol,
@@ -140,14 +152,22 @@ def run_macro_slotting(
                 
         if not assigned:
             cycle_days_default = float(sorted_storages[0].cycle_days) if sorted_storages else 15.0
-            cycle_vol = (units_per_day * cycle_days_default) * sku_vol
             cycle_qty = units_per_day * cycle_days_default
-            um_ratio = getattr(sku, "boxes_per_m3", None) or getattr(sku, "um_ratio", 1.0)
-            if um_ratio <= 0:
+
+            raw_ratio = getattr(sku, "boxes_per_m3", None)
+            if raw_ratio is None or str(raw_ratio).strip() == "":
+                raw_ratio = getattr(sku, "um_ratio", 1.0)
+            try:
+                um_ratio = float(raw_ratio)
+                if math.isnan(um_ratio) or um_ratio <= 0:
+                    um_ratio = 1.0
+            except (ValueError, TypeError):
                 um_ratio = 1.0
+
             replenishment_units = cycle_qty / um_ratio
-            total_sku_weight = cycle_qty * float(sku.weight or 0)
-            total_sku_vol = cycle_qty * sku_vol
+            cycle_vol = replenishment_units * sku_vol
+            total_sku_weight = replenishment_units * float(sku.weight or 0)
+            total_sku_vol = replenishment_units * sku_vol
 
             results.append(
                 MacroResult(
@@ -157,7 +177,7 @@ def run_macro_slotting(
                     cycle_volume=cycle_vol,
                     reason="No storage type matched constraints or capacity",
                     description=sku_desc,
-                    boxes_per_m3=getattr(sku, "boxes_per_m3", 0.0) or 0.0,
+                    boxes_per_m3=um_ratio,
                     category=sku_cat,
                     total_weight=total_sku_weight,
                     total_vol=total_sku_vol,

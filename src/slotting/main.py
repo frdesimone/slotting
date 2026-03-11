@@ -668,7 +668,7 @@ async def ejecutar_micro(
             tray_area_mm2 = storage_cfg.tray_length * storage_cfg.tray_width * 1e6  # m² -> mm²
             config = MicroSlottingConfig(
                 cycle_days=payload_data.cycle_days,
-                max_trays=storage_cfg.max_trays,
+                max_trays=int(storage_cfg.qty) if getattr(storage_cfg, "qty", None) is not None else getattr(storage_cfg, "max_trays", 64),
                 tray_weight_max=storage_cfg.max_weight,
                 tray_base_area_max=tray_area_mm2,
                 group_score_wa=payload_data.weights.affinity,
@@ -679,6 +679,10 @@ async def ejecutar_micro(
                 is_variable_height=storage_cfg.is_variable_height if storage_cfg.is_variable_height is not None else False,
                 max_h_loc=storage_cfg.max_h_loc if storage_cfg.max_h_loc is not None else 0.5,
                 max_h_storage=storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0,
+                group_max_size=999,
+                subgroup_max_size=999,
+                group_min_delta=-9999.0,
+                subgroup_min_delta=-9999.0,
             )
 
             # Ejecutar motor Micro

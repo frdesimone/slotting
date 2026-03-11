@@ -679,8 +679,8 @@ async def ejecutar_micro(
                 is_variable_height=storage_cfg.is_variable_height if storage_cfg.is_variable_height is not None else False,
                 max_h_loc=storage_cfg.max_h_loc if storage_cfg.max_h_loc is not None else 0.5,
                 max_h_storage=storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0,
-                group_max_size=40,
-                subgroup_max_size=40,
+                group_max_size=20,
+                subgroup_max_size=20,
                 group_min_delta=-5.0,
                 subgroup_min_delta=-5.0,
             )

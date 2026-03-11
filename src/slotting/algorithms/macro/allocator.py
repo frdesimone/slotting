@@ -84,6 +84,8 @@ def run_macro_slotting(
             cycle_days = float(st.cycle_days)
             max_cycle_vol_limit = st.cycle_vol_limit
             allowed_cats = st.categories
+            max_w_loc = getattr(st, "max_w", float("inf"))
+            max_l_loc = getattr(st, "max_l", float("inf"))
             cap_info = storage_capacity_info.get(name, {})
             max_loc_vol = cap_info.get("max_loc_vol", float("inf"))
 
@@ -108,6 +110,14 @@ def run_macro_slotting(
             if sku_vol > max_loc_vol:
                 continue
 
+            # Descarte por superficie/dimensiones (verificando que el SKU entre físicamente, permitiendo rotarlo 90 grados)
+            sku_min_dim = min(sku_w, sku_l)
+            sku_max_dim = max(sku_w, sku_l)
+            loc_min_dim = min(max_w_loc, max_l_loc)
+            loc_max_dim = max(max_w_loc, max_l_loc)
+            if sku_min_dim > loc_min_dim or sku_max_dim > loc_max_dim:
+                continue
+
             if usage[name] + cycle_vol <= limits[name]:
                 usage[name] += cycle_vol
                 um_ratio = getattr(sku, "boxes_per_m3", None) or getattr(sku, "um_ratio", 1.0)
@@ -116,6 +126,12 @@ def run_macro_slotting(
                 replenishment_units = cycle_qty / um_ratio
                 total_sku_weight = cycle_qty * float(sku.weight or 0)
                 total_sku_vol = cycle_qty * sku_vol
+
+                # --- NUEVO CÁLCULO ESTRICTO DE REPOSICIÓN ---
+                # 1. Volumen total guardado / volumen de 1 unidad de venta = unidades de venta reales
+                actual_sales_units = (total_sku_vol / sku_vol) if sku_vol > 0 else 0.0
+                # 2. Unidades de venta reales / ratio = unidades de reposición
+                corrected_replenishment_units = actual_sales_units / um_ratio
 
                 results.append(
                     MacroResult(
@@ -129,7 +145,7 @@ def run_macro_slotting(
                         category=sku_cat,
                         total_weight=total_sku_weight,
                         total_vol=total_sku_vol,
-                        replenishment_units=replenishment_units,
+                        replenishment_units=corrected_replenishment_units,
                         width=getattr(sku, "width", 0) or 0,
                         length=getattr(sku, "length", 0) or 0,
                         height=getattr(sku, "height", 0) or 0,
@@ -149,6 +165,10 @@ def run_macro_slotting(
             total_sku_weight = cycle_qty * float(sku.weight or 0)
             total_sku_vol = cycle_qty * sku_vol
 
+            # --- NUEVO CÁLCULO ESTRICTO DE REPOSICIÓN ---
+            actual_sales_units = (total_sku_vol / sku_vol) if sku_vol > 0 else 0.0
+            corrected_replenishment_units = actual_sales_units / um_ratio
+
             results.append(
                 MacroResult(
                     sku_id=sku.sku_id,
@@ -161,7 +181,7 @@ def run_macro_slotting(
                     category=sku_cat,
                     total_weight=total_sku_weight,
                     total_vol=total_sku_vol,
-                    replenishment_units=replenishment_units,
+                    replenishment_units=corrected_replenishment_units,
                     width=getattr(sku, "width", 0) or 0,
                     length=getattr(sku, "length", 0) or 0,
                     height=getattr(sku, "height", 0) or 0,

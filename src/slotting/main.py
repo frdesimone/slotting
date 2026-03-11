@@ -730,27 +730,38 @@ async def ejecutar_micro(
                 items_export = []
                 for i in t.items:
                     vol = getattr(i, "total_volume", 0) or 0
-                    units_placed = getattr(i, "units", 0.0)  # Unidades de venta reales asignadas a esta bandeja
 
-                    sku = sku_by_id.get(str(getattr(i, "sku_id", "")).strip())
-                    desc = getattr(sku, "description", "") if sku else ""
+                    sku_obj = skus_dict.get(str(getattr(i, "sku_id", "")).strip())
+                    desc = getattr(sku_obj, "description", "") if sku_obj else ""
 
-                    # Calcular el ratio para saber cuántas cajas de reposición implica
-                    um_ratio = getattr(sku, "boxes_per_m3", None) or getattr(sku, "um_ratio", 1.0)
+                    um_ratio = getattr(sku_obj, "boxes_per_m3", None) or getattr(sku_obj, "um_ratio", 1.0)
                     try:
                         um_ratio = float(um_ratio)
-                        if um_ratio <= 0:
-                            um_ratio = 1.0
+                        if um_ratio <= 0: um_ratio = 1.0
                     except (ValueError, TypeError):
                         um_ratio = 1.0
 
-                    boxes = units_placed / um_ratio
+                    # Calcular el volumen de 1 unidad de venta en m3
+                    unit_w = (sku_obj.width or 0.0) / 100.0 if sku_obj else 0.0
+                    unit_l = (sku_obj.length or 0.0) / 100.0 if sku_obj else 0.0
+                    unit_h = (sku_obj.height or 0.0) / 100.0 if sku_obj else 0.0
+                    sku_vol_unit = unit_w * unit_l * unit_h
+
+                    # --- NUEVO CÁLCULO ESTRICTO DE REPOSICIÓN ---
+                    # 1. Unidades de venta = Volumen ocupado en bandeja / Volumen de 1 unidad
+                    if sku_vol_unit > 0:
+                        unidades_venta = vol / sku_vol_unit
+                    else:
+                        unidades_venta = getattr(i, "units", 0.0)  # Fallback seguro
+
+                    # 2. Unidades de reposición = Unidades de venta / ratio
+                    boxes = unidades_venta / um_ratio
 
                     items_export.append({
                         "sku": getattr(i, "sku_id", ""),
                         "vol": vol,
                         "description": desc,
-                        "boxes": boxes,  # No redondeamos acá para no perder decimales en la sumarización
+                        "boxes": boxes
                     })
 
                 consolidated_items = {}

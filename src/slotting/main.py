@@ -730,11 +730,28 @@ async def ejecutar_micro(
                 items_export = []
                 for i in t.items:
                     vol = getattr(i, "total_volume", 0) or 0
+                    units_placed = getattr(i, "units", 0.0)  # Unidades de venta reales asignadas a esta bandeja
+
                     sku = sku_by_id.get(str(getattr(i, "sku_id", "")).strip())
                     desc = getattr(sku, "description", "") if sku else ""
-                    boxes_per_m3 = getattr(sku, "boxes_per_m3", 0) or 0 if sku else 0
-                    boxes = vol * boxes_per_m3 if boxes_per_m3 else 0
-                    items_export.append({"sku": getattr(i, "sku_id", ""), "vol": vol, "description": desc, "boxes": round(boxes, 2)})
+
+                    # Calcular el ratio para saber cuántas cajas de reposición implica
+                    um_ratio = getattr(sku, "boxes_per_m3", None) or getattr(sku, "um_ratio", 1.0)
+                    try:
+                        um_ratio = float(um_ratio)
+                        if um_ratio <= 0:
+                            um_ratio = 1.0
+                    except (ValueError, TypeError):
+                        um_ratio = 1.0
+
+                    boxes = units_placed / um_ratio
+
+                    items_export.append({
+                        "sku": getattr(i, "sku_id", ""),
+                        "vol": vol,
+                        "description": desc,
+                        "boxes": boxes,  # No redondeamos acá para no perder decimales en la sumarización
+                    })
 
                 consolidated_items = {}
                 for item in items_export:

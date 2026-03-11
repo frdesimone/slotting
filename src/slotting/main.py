@@ -666,7 +666,7 @@ async def ejecutar_micro(
 
             # Config desde storage_cfg
             tray_area_mm2 = storage_cfg.tray_length * storage_cfg.tray_width * 1e6  # m² -> mm²
-        config = MicroSlottingConfig(
+            config = MicroSlottingConfig(
                 cycle_days=payload_data.cycle_days,
                 max_trays=storage_cfg.max_trays,
                 tray_weight_max=storage_cfg.max_weight,
@@ -686,28 +686,28 @@ async def ejecutar_micro(
             groups = build_groups(skus=skus_for_storage, orders=orders_for_storage, config=config)
             selected_groups = select_groups(groups=groups, skus=skus_for_storage, selection_cost_mode=config.selection_cost_mode)
             tray_plans = build_tray_plans(selected_groups=selected_groups, skus=skus_for_storage, affinity_graph=affinity_graph, config=config)
-        final_trays = [tray for plan in tray_plans for tray in plan.trays]
+            final_trays = [tray for plan in tray_plans for tray in plan.trays]
 
             if payload_data.optimize_trays and final_trays:
                 sg_by_id = {sg.subgroup_id: sg for plan in tray_plans for sg in plan.subgroups}
                 sku_by_id_local = {s.sku_id: s for s in skus_for_storage}
-            hybrid = build_hybrid_kpi_state(
+                hybrid = build_hybrid_kpi_state(
                     subgroups=list(sg_by_id.values()),
-                trays=final_trays,
+                    trays=final_trays,
                     sku_by_id=sku_by_id_local,
-                affinity_graph=affinity_graph,
-                config=config,
-            )
+                    affinity_graph=affinity_graph,
+                    config=config,
+                )
                 opt_config = LocalSearchConfig(time_budget_ms=payload_data.opt_time_ms, allow_annealing=True)
-            optimize(hybrid, opt_config)
-            final_trays = hybrid.all_trays()
+                optimize(hybrid, opt_config)
+                final_trays = hybrid.all_trays()
 
-        if not final_trays:
+            if not final_trays:
                 results_by_storage[st_key] = {"kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": [], "locations": []}
                 continue
 
-        total_trays = len(final_trays)
-        avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
+            total_trays = len(final_trays)
+            avg_occupancy = sum(get_occ(t) for t in final_trays) / total_trays if total_trays else 0
 
             skus_dict = {str(s.sku_id).strip(): s for s in skus_list}
             total_wasted_volume = 0.0
@@ -842,7 +842,7 @@ async def ejecutar_micro(
 
                 locations_export.append({
                     "location_id": clean_tray_id,
-                "occupancy_pct": round(get_occ(t), 2),
+                    "occupancy_pct": round(get_occ(t), 2),
                     "max_height": tray_max_height,
                     "wasted_vol": tray_wasted_vol,
                     "metrics": {
@@ -854,16 +854,16 @@ async def ejecutar_micro(
                         "max_volume": round(max_volume, 4),
                     },
                     "items": location_items,
-            })
+                })
 
-        kpi_dict = {
-            "total_trays": total_trays,
+            kpi_dict = {
+                "total_trays": total_trays,
                 "total_locations": total_trays,
                 "skus_placed": len(skus_for_storage),
-            "avg_area_occupancy_pct": round(avg_occupancy, 2),
+                "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
                 "total_wasted_vol": total_wasted_volume,
-        }
+            }
             results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export}
             print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs.")
 

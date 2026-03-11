@@ -213,8 +213,8 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
         description = safe_str(row[col_d]) if col_d else ""
-        m3_per_box = safe_float(row[col_cajas]) if col_cajas else 0.0
-        boxes_per_m3 = (1.0 / m3_per_box) if m3_per_box > 0 else 0.0
+        um_ratio_val = safe_float(row[col_cajas]) if col_cajas else 0.0
+        boxes_per_m3 = um_ratio_val if um_ratio_val > 0 else 0.0
         category = safe_str(row[col_cat]) if col_cat else ""
 
         records[sku_id] = SkuRecord(

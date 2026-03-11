@@ -20,6 +20,8 @@ class MacroResult:
     category: str = ""
     total_weight: float = 0.0
     total_vol: float = 0.0
+    sku_vol: float = 0.0
+    actual_sales_units: float = 0.0
     replenishment_units: float = 0.0
     width: float = 0.0
     length: float = 0.0

@@ -680,7 +680,7 @@ async def ejecutar_micro(
             tray_area_mm2 = storage_cfg.tray_length * storage_cfg.tray_width * 1e6  # m² -> mm²
             config = MicroSlottingConfig(
                 cycle_days=payload_data.cycle_days,
-                max_trays=int(storage_cfg.qty) if getattr(storage_cfg, "qty", None) is not None else getattr(storage_cfg, "max_trays", 64),
+                max_trays=999999,
                 tray_weight_max=storage_cfg.max_weight,
                 tray_base_area_max=tray_area_mm2,
                 group_score_wa=payload_data.weights.affinity,
@@ -717,6 +717,37 @@ async def ejecutar_micro(
                 opt_config = LocalSearchConfig(time_budget_ms=payload_data.opt_time_ms, allow_annealing=True)
                 optimize(hybrid, opt_config)
                 final_trays = hybrid.all_trays()
+
+            # --- COMPRESOR DE BANDEJAS (FUSIONA GRUPOS) ---
+            if getattr(storage_cfg, "is_multiproduct", True):
+                compacted_trays = []
+                for t in final_trays:
+                    if not getattr(t, "items", []):
+                        continue
+                    merged = False
+                    for ct in compacted_trays:
+                        weight_used = getattr(t, "weight_used", 0) or 0
+                        area_used = getattr(t, "area_used", 0) or 0
+                        ct_weight = getattr(ct, "weight_used", 0) or 0
+                        ct_area = getattr(ct, "area_used", 0) or 0
+                        ct_max_w = getattr(ct, "max_weight", float("inf")) or float("inf")
+                        ct_max_a = getattr(ct, "max_area", float("inf")) or float("inf")
+                        if ct_weight + weight_used <= ct_max_w and ct_area + area_used <= ct_max_a:
+                            ct.items.extend(getattr(t, "items", []))
+                            ct.weight_used = ct_weight + weight_used
+                            ct.area_used = ct_area + area_used
+                            ct.height = max(getattr(ct, "height", 0) or 0, getattr(t, "height", 0) or 0)
+                            merged = True
+                            break
+                    if not merged:
+                        compacted_trays.append(t)
+                final_trays = compacted_trays
+
+            # --- CORTE FINAL POR CAPACIDAD FÍSICA REAL ---
+            qty_limit = int(getattr(storage_cfg, "qty", None) or getattr(storage_cfg, "max_trays", 999999) or 999999)
+            if len(final_trays) > qty_limit:
+                print(f"⚠️ Recortando de {len(final_trays)} a {qty_limit} bandejas/ubicaciones en {st_key}")
+                final_trays = final_trays[:qty_limit]
 
             if not final_trays:
                 results_by_storage[st_key] = {"kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": [], "locations": []}

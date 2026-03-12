@@ -721,25 +721,80 @@ async def ejecutar_micro(
             # --- COMPRESOR DE BANDEJAS (FUSIONA GRUPOS) ---
             if getattr(storage_cfg, "is_multiproduct", True):
                 compacted_trays = []
+
+                def calc_tray_metrics(items, st_cfg, sku_dict):
+                    # Agrupar SKUs idénticos para optimizar apilamiento
+                    grouped = {}
+                    for i in items:
+                        if i.sku_id in grouped:
+                            grouped[i.sku_id] += getattr(i, "units", 0)
+                        else:
+                            grouped[i.sku_id] = getattr(i, "units", 0)
+
+                    total_area = 0.0
+                    total_weight = 0.0
+                    max_h_m = st_cfg.max_h_loc if st_cfg.max_h_loc is not None else 0.5
+                    max_h_storage_m = st_cfg.max_h_storage if st_cfg.max_h_storage is not None else 5.0
+                    is_var_h = st_cfg.is_variable_height if st_cfg.is_variable_height is not None else False
+                    sf = st_cfg.stackability_factor if st_cfg.stackability_factor is not None else 1
+
+                    current_max_h = 0.0
+                    if is_var_h:
+                        for s_id in grouped.keys():
+                            obj = sku_dict.get(str(s_id).strip())
+                            if obj:
+                                current_max_h = max(current_max_h, float(obj.height or 0) / 100.0)
+                    for s_id, units in grouped.items():
+                        obj = sku_dict.get(str(s_id).strip())
+                        if not obj:
+                            continue
+                        uh = float(obj.height or 0) / 100.0
+                        uw = float(obj.width or 0) / 100.0
+                        ul = float(obj.length or 0) / 100.0
+                        uwgt = float(getattr(obj, "weight", 0) or 0)
+
+                        if is_var_h:
+                            h_limit = max(current_max_h, uh)
+                            if max_h_storage_m > 0:
+                                h_limit = min(h_limit, max_h_storage_m)
+                        else:
+                            h_limit = max_h_m
+
+                        mv = int(h_limit // uh) if uh > 0 else 1
+                        if mv < 1:
+                            mv = 1
+                        astack = min(sf, mv)
+
+                        stks = math.ceil(units / astack) if astack > 0 else units
+                        total_area += (uw * ul * 1e6) * stks
+                        total_weight += units * uwgt
+
+                    return total_area, total_weight
+
                 for t in final_trays:
-                    if not getattr(t, "items", []):
+                    t_items = getattr(t, "items", [])
+                    if not t_items:
                         continue
                     merged = False
                     for ct in compacted_trays:
-                        weight_used = getattr(t, "weight_used", 0) or 0
-                        area_used = getattr(t, "area_used", 0) or 0
-                        ct_weight = getattr(ct, "weight_used", 0) or 0
-                        ct_area = getattr(ct, "area_used", 0) or 0
+                        # Simular la física de mezclar ambas bandejas
+                        combined_items = ct.items + t_items
+                        new_area, new_weight = calc_tray_metrics(combined_items, storage_cfg, sku_by_id)
+
                         ct_max_w = getattr(ct, "max_weight", float("inf")) or float("inf")
                         ct_max_a = getattr(ct, "max_area", float("inf")) or float("inf")
-                        if ct_weight + weight_used <= ct_max_w and ct_area + area_used <= ct_max_a:
-                            ct.items.extend(getattr(t, "items", []))
-                            ct.weight_used = ct_weight + weight_used
-                            ct.area_used = ct_area + area_used
+
+                        if new_weight <= ct_max_w and new_area <= ct_max_a:
+                            # Se aprueba la fusión: entra perfecto
+                            ct.items = combined_items
+                            ct.weight_used = new_weight
+                            ct.area_used = new_area
                             ct.height = max(getattr(ct, "height", 0) or 0, getattr(t, "height", 0) or 0)
                             merged = True
                             break
                     if not merged:
+                        # No entra, queda como bandeja independiente con sus métricas limpias
+                        t.area_used, t.weight_used = calc_tray_metrics(t_items, storage_cfg, sku_by_id)
                         compacted_trays.append(t)
                 final_trays = compacted_trays
 

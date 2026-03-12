@@ -678,9 +678,12 @@ async def ejecutar_micro(
 
             # Config desde storage_cfg
             tray_area_mm2 = storage_cfg.tray_length * storage_cfg.tray_width * 1e6  # m² -> mm²
+            # Límite holgado para permitir expansión y compresión sin explotar la RAM
+            real_qty = int(storage_cfg.qty) if getattr(storage_cfg, "qty", None) is not None else int(getattr(storage_cfg, "max_trays", 64) or 64)
+            safe_virtual_limit = max(100, real_qty * 3)
             config = MicroSlottingConfig(
                 cycle_days=payload_data.cycle_days,
-                max_trays=999999,
+                max_trays=safe_virtual_limit,
                 tray_weight_max=storage_cfg.max_weight,
                 tray_base_area_max=tray_area_mm2,
                 group_score_wa=payload_data.weights.affinity,

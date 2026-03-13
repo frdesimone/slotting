@@ -974,7 +974,7 @@ async def ejecutar_micro(
                 "total_wasted_vol": total_wasted_volume,
             }
             results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export}
-            print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs.")
+            print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs")
 
         params_dict = {
             "cycle_days": payload_data.cycle_days,

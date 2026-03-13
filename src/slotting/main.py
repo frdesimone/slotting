@@ -785,7 +785,9 @@ async def ejecutar_micro(
                         new_area, new_weight = calc_tray_metrics(combined_items, storage_cfg, sku_by_id)
 
                         ct_max_w = getattr(ct, "max_weight", float("inf")) or float("inf")
-                        ct_max_a = getattr(ct, "max_area", float("inf")) or float("inf")
+                        # Corrección: max_surface (export) o max_area (modelo Tray) para evitar área infinita
+                        ct_max_a = getattr(ct, "max_surface", None) or getattr(ct, "max_area", None)
+                        ct_max_a = float(ct_max_a) if ct_max_a is not None else float("inf")
 
                         if new_weight <= ct_max_w and new_area <= ct_max_a:
                             # Se aprueba la fusión: entra perfecto
@@ -797,7 +799,9 @@ async def ejecutar_micro(
                             break
                     if not merged:
                         # No entra, queda como bandeja independiente con sus métricas limpias
-                        t.area_used, t.weight_used = calc_tray_metrics(t_items, storage_cfg, sku_by_id)
+                        new_area, new_weight = calc_tray_metrics(t_items, storage_cfg, sku_by_id)
+                        t.area_used = new_area
+                        t.weight_used = new_weight
                         compacted_trays.append(t)
                 final_trays = compacted_trays
 

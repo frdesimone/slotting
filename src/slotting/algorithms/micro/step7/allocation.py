@@ -176,15 +176,18 @@ def _fill_tray(
             break
 
         unit_h = heights[sku_id]
-        # config max_h_* en m; heights en mm → convertir a mm para consistencia
-        max_h_loc_mm = config.max_h_loc * 1000.0 if config.max_h_loc > 0 else float("inf")
-        max_h_storage_mm = config.max_h_storage * 1000.0 if config.max_h_storage > 0 else float("inf")
+
+        # FIX: La altura del SKU (unit_h) viene en CM.
+        # Pasamos la altura del equipo (metros) a CM multiplicando por 100.0
+        max_h_loc_cm = config.max_h_loc * 100.0 if config.max_h_loc > 0 else float("inf")
+        max_h_storage_cm = config.max_h_storage * 100.0 if config.max_h_storage > 0 else float("inf")
+
         if config.is_variable_height:
             h_limit = max(tray.height, unit_h)
-            if max_h_storage_mm < float("inf"):
-                h_limit = min(h_limit, max_h_storage_mm)
+            if max_h_storage_cm < float("inf"):
+                h_limit = min(h_limit, max_h_storage_cm)
         else:
-            h_limit = max_h_loc_mm
+            h_limit = max_h_loc_cm
 
         max_vertical = int(h_limit // unit_h) if unit_h > 0 else 1
         if max_vertical < 1:

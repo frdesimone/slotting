@@ -153,6 +153,10 @@ def _fill_tray(
     max_weight: float,
     config: MicroSlottingConfig,
 ) -> None:
+    # Límites reales de la bandeja (max_area en modelo Tray)
+    tray_max_surf = getattr(tray, "max_surface", None) or tray.max_area
+    tray_max_surf = float(tray_max_surf) if tray_max_surf is not None else float(max_area)
+
     for sku_id in ordered_skus:
         if not config.is_multiproduct and tray.items:
             existing_skus = {item.sku_id for item in tray.items}
@@ -163,9 +167,12 @@ def _fill_tray(
         if units_left <= 0:
             continue
 
-        area_left = max_area - tray.area_used
-        weight_left = max_weight - tray.weight_used
-        if area_left <= 1e-9 or weight_left <= 1e-9:
+        # Espacio libre real (nunca exceder capacidad de la bandeja)
+        available_surface = tray_max_surf - tray.area_used
+        tray_max_w = getattr(tray, "max_weight", max_weight)
+        available_weight = tray_max_w - tray.weight_used
+
+        if available_surface <= 1e-9 or available_weight <= 1e-9:
             break
 
         unit_h = heights[sku_id]
@@ -186,15 +193,15 @@ def _fill_tray(
 
         add_units = _max_units_that_fit(
             units_left=units_left,
-            area_left=area_left,
-            weight_left=weight_left,
+            area_left=available_surface,
+            weight_left=available_weight,
             unit_area=unit_area[sku_id],
             unit_weight=unit_weight[sku_id],
             actual_stack=actual_stack,
         )
         if add_units <= 0:
             continue
-        _add_units_to_tray(
+        actually_added = _add_units_to_tray(
             tray=tray,
             sku_id=sku_id,
             add_units=add_units,
@@ -203,8 +210,9 @@ def _fill_tray(
             unit_volume=unit_volume[sku_id],
             height=unit_h,
             actual_stack=actual_stack,
+            tray_max_area=tray_max_surf,
         )
-        remaining_units[sku_id] = units_left - add_units
+        remaining_units[sku_id] = units_left - actually_added
 
 
 def _max_units_that_fit(
@@ -237,13 +245,46 @@ def _add_units_to_tray(
     unit_volume: float,
     height: float,
     actual_stack: int,
-) -> None:
+    tray_max_area: float | None = None,
+) -> float:
+    """Añade unidades a la bandeja. Retorna las unidades realmente añadidas (puede ser menor por splitting)."""
+    if add_units <= 0:
+        return 0.0
+    actual_stack = max(1, actual_stack)
     stacks_needed = math.ceil(add_units / actual_stack) if actual_stack > 0 else add_units
     total_area = stacks_needed * unit_area
     total_weight = add_units * unit_weight
     total_volume = add_units * unit_volume
+
+    # Restricción rígida: si excede capacidad, fraccionar (splitting)
+    max_surf = tray_max_area if tray_max_area is not None else getattr(tray, "max_surface", tray.max_area)
+    if max_surf is None:
+        max_surf = tray.max_area
+    available_surface = max(0, max_surf - tray.area_used)
+    available_weight = max(0, tray.max_weight - tray.weight_used)
+
+    if total_area > available_surface or total_weight > available_weight:
+        # Calcular cuántas unidades sí entran (splitting): cada stack = unit_area, cada stack tiene actual_stack unidades
+        max_stacks = math.floor(available_surface / unit_area) if unit_area > 0 else 0
+        units_by_area = max_stacks * actual_stack
+        units_by_weight = math.floor(available_weight / unit_weight) if unit_weight > 0 else add_units
+        add_units = max(0.0, min(add_units, units_by_area, units_by_weight))
+        if add_units <= 0:
+            return 0.0
+        stacks_needed = math.ceil(add_units / actual_stack) if actual_stack > 0 else add_units
+        total_area = stacks_needed * unit_area
+        total_weight = add_units * unit_weight
+        total_volume = add_units * unit_volume
+
     tray.area_used += total_area
     tray.weight_used += total_weight
+
+    # Garantía final: NINGUNA bandeja puede terminar con area_used > max_area
+    if tray.area_used > max_surf:
+        tray.area_used = max_surf
+    if tray.weight_used > tray.max_weight:
+        tray.weight_used = tray.max_weight
+
     tray.height = max(tray.height, height)
     tray.items.append(
         TrayItem(
@@ -257,6 +298,7 @@ def _add_units_to_tray(
             total_area=total_area,
         )
     )
+    return add_units
 
 
 def _build_sku_metrics(

@@ -285,40 +285,39 @@ async def detectar_outliers_endpoint(
         total_skus = len(skus_list)
         total_pedidos = len(orders)
         order_stats = getattr(stats, "order_stats", None)
-        total_lineas = int(order_stats.kept_rows) if order_stats else 0  # Renglones del pedido
-        total_unidades = float(order_stats.total_units) if order_stats else 0.0  # Suma de cantidades (qty)
+        total_lineas = int(order_stats.kept_rows) if order_stats else 0
+        total_unidades = float(order_stats.total_units) if order_stats else 0.0
+
+        # Capturamos la cantidad de días del período histórico (Ingreso de Datos, default 180)
+        period_days = float(getattr(order_stats, "period_days", 180.0)) if order_stats else 180.0
+
         total_kg = 0.0
         total_m3 = 0.0
-        period_days = float(getattr(order_stats, "period_days", 180.0)) if order_stats else 180.0
-        cycle_days = 30.0
 
-        for o in orders:
-            for sid in o.sku_ids:
-                sku_obj = sku_by_id.get(sid)
-                if sku_obj:
-                    if getattr(sku_obj, "weight", None):
-                        try:
-                            total_kg += float(sku_obj.weight)
-                        except (ValueError, TypeError):
-                            pass
-                    vol_unit = float(getattr(sku_obj, "volume", 0) or getattr(sku_obj, "vol_unit", 0) or 0)
-                    units_per_day = float(getattr(sku_obj, "units_sold_total", 0) or 0) / period_days if period_days > 0 else 0.0
-                    if vol_unit > 0:
-                        if units_per_day > 0:
-                            total_m3 += vol_unit * units_per_day * cycle_days
-                        else:
-                            total_m3 += vol_unit
+        # Iteramos UNA SOLA VEZ sobre el catálogo de SKUs únicos
+        for sku_obj in skus_list:
+            unit_weight = float(getattr(sku_obj, "weight", 0) or 0)
+            vol_unit = float(getattr(sku_obj, "volume", 0) or getattr(sku_obj, "vol_unit", 0) or 0)
+            units_sold = float(getattr(sku_obj, "units_sold_total", 0) or 0)
+
+            if units_sold > 0:
+                total_kg += units_sold * unit_weight
+                total_m3 += units_sold * vol_unit
 
         lineas_por_pedido = total_lineas / total_pedidos if total_pedidos > 0 else 0.0
 
         summary_stats = {
             "total_skus": total_skus,
             "total_pedidos": total_pedidos,
-            "total_unidades": int(total_unidades) if total_unidades == int(total_unidades) else round(total_unidades, 2),
+            "total_orders": total_pedidos,
             "total_lineas": total_lineas,
-            "lineas_por_pedido": round(lineas_por_pedido, 2),
+            "total_lines": total_lineas,
+            "total_unidades": int(total_unidades) if total_unidades == int(total_unidades) else round(total_unidades, 2),
+            "total_units": int(total_unidades) if total_unidades == int(total_unidades) else round(total_unidades, 2),
             "total_kg": round(total_kg, 2),
             "total_m3": round(total_m3, 3),
+            "period_days": period_days,
+            "lineas_por_pedido": round(lineas_por_pedido, 2),
         }
 
         def sku_desc(sku) -> str:
@@ -879,15 +878,6 @@ async def ejecutar_micro(
                 final_items = list(consolidated_items.values())
 
                 tray_max_height = max([i.get("height", 0.0) for i in final_items], default=0.0)
-                tray_wasted_vol = 0.0
-                for i in final_items:
-                    h = i.get("height", 0.0)
-                    if h > 0 and tray_max_height > h:
-                        base_area_m2 = i["vol"] / (h / 100.0)
-                        wasted = base_area_m2 * ((tray_max_height - h) / 100.0)
-                        tray_wasted_vol += wasted
-                total_wasted_volume += tray_wasted_vol
-
                 location_weight = 0.0
                 location_surface = 0.0
                 location_volume = 0.0
@@ -948,6 +938,14 @@ async def ejecutar_micro(
                         "volume": round(item_vol, 4),
                         "replenishment_units": round(qty_boxes, 2),  # Al usuario le mostramos cajas
                     })
+
+                # Aire desperdiciado: diferencia entre volumen físico máximo y volumen utilizado
+                max_h_m = float(max_h_loc) if not is_var_h else float(max_h_storage)
+                if max_h_m <= 0:
+                    max_h_m = 0.5
+                total_tray_vol = max_h_m * max_surface
+                tray_wasted_vol = max(0.0, total_tray_vol - location_volume)
+                total_wasted_volume += tray_wasted_vol
 
                 locations_export.append({
                     "location_id": clean_tray_id,

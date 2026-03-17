@@ -52,11 +52,13 @@ class MicroSlottingConfig:
     max_trays: int = 256
     optimizer_tray_count_weight: float = 0.2
     optimizer_area_waste_weight: float = 200.0
+    enforce_integer_replenishment: bool = False
+    round_to_one_threshold: float = 0.25
     is_multiproduct: bool = True
     stackability_factor: int = 1
     is_variable_height: bool = False
-    max_h_loc: float = 0.0
-    max_h_storage: float = 0.0
+    max_h_loc: float = 0.5
+    max_h_storage: float = 5.0
 
     def __post_init__(self) -> None:
         self._validate_strategy_inputs()
@@ -96,7 +98,8 @@ class MicroSlottingConfig:
             raise ValueError("selection_cost_mode must be none or cycle_volume")
         if self.group_max_size <= 0:
             raise ValueError("group_max_size must be > 0")
-        # group_min_delta puede ser negativo para relajar afinidad y priorizar llenado
+        if self.group_min_delta < 0:
+            raise ValueError("group_min_delta must be >= 0")
         if self.group_score_wa < 0 or self.group_score_wr < 0 or self.group_score_wh < 0:
             raise ValueError("group_score_wa/wr/wh must be >= 0")
         if self.group_height_ref <= 0:
@@ -123,7 +126,8 @@ class MicroSlottingConfig:
             raise ValueError(
                 "subgroup_singleton_strategy must be min_loss or allow_singleton"
             )
-        # subgroup_min_delta puede ser negativo para relajar afinidad y priorizar llenado
+        if self.subgroup_min_delta < 0:
+            raise ValueError("subgroup_min_delta must be >= 0")
         if self.subgroup_marginal_tray_weight < 0:
             raise ValueError("subgroup_marginal_tray_weight must be >= 0")
         if self.subgroup_marginal_area_waste_weight < 0:

@@ -92,6 +92,8 @@ class StorageTypeConfig(BaseModel):
     max_h_loc: float | None = None
     max_h_storage: float | None = None
     is_variable_height: bool | None = None
+    enforce_integer_replenishment: bool = False
+    round_to_one_threshold: float = 0.25
 
 
 class SkuMicroInput(BaseModel):
@@ -697,6 +699,8 @@ async def ejecutar_micro(
                 subgroup_max_size=20,
                 group_min_delta=-5.0,
                 subgroup_min_delta=-5.0,
+                enforce_integer_replenishment=getattr(storage_cfg, "enforce_integer_replenishment", False),
+                round_to_one_threshold=getattr(storage_cfg, "round_to_one_threshold", 0.25),
             )
 
             # Ejecutar motor Micro

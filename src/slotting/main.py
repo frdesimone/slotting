@@ -697,8 +697,8 @@ async def ejecutar_micro(
                 max_h_storage=storage_cfg.max_h_storage if storage_cfg.max_h_storage is not None else 5.0,
                 group_max_size=20,
                 subgroup_max_size=20,
-                group_min_delta=-5.0,
-                subgroup_min_delta=-5.0,
+                group_min_delta=0.0,
+                subgroup_min_delta=0.0,
                 enforce_integer_replenishment=getattr(storage_cfg, "enforce_integer_replenishment", False),
                 round_to_one_threshold=getattr(storage_cfg, "round_to_one_threshold", 0.25),
             )

@@ -408,6 +408,7 @@ async def ejecutar_macro(
     
     # --- NUEVOS CAMPOS ---
     exclude_outliers: bool = Form(False),
+    include_zero_rot: bool = Form(True),
     excluded_skus: str = Form("[]"),
     excluded_orders: str = Form("[]"),
     storage_types: str = Form("[]"), # Array JSON de almacenamientos
@@ -475,7 +476,7 @@ async def ejecutar_macro(
             file_path=path_file,
             cycle_days=cycle_days_for_loader,
             period_days=180.0,
-            include_zero_rot=True,
+            include_zero_rot=include_zero_rot,
             mapping=mapping_config,
             excluded_skus=ex_skus_set,     # Pasamos los SKUs malos
             excluded_orders=ex_orders_set  # Pasamos los pedidos malos

@@ -814,8 +814,20 @@ async def ejecutar_micro(
                 print(f"⚠️ Recortando de {len(final_trays)} a {qty_limit} bandejas/ubicaciones en {st_key}")
                 final_trays = final_trays[:qty_limit]
 
+            skus_for_storage_ids = {str(s.sku_id).strip() for s in skus_for_storage}
+            placed_skus_in_storage = set()
+            for t in final_trays:
+                for i in getattr(t, "items", []):
+                    placed_skus_in_storage.add(str(getattr(i, "sku_id", "")).strip())
+            unassigned_skus = list(skus_for_storage_ids - placed_skus_in_storage)
+
             if not final_trays:
-                results_by_storage[st_key] = {"kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": len(skus_for_storage), "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays}, "best_trays": [], "locations": []}
+                results_by_storage[st_key] = {
+                    "kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": 0, "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays, "total_wasted_vol": 0},
+                    "best_trays": [],
+                    "locations": [],
+                    "unassigned_skus": unassigned_skus
+                }
                 continue
 
             total_trays = len(final_trays)
@@ -970,13 +982,13 @@ async def ejecutar_micro(
             kpi_dict = {
                 "total_trays": total_trays,
                 "total_locations": total_trays,
-                "skus_placed": len(skus_for_storage),
+                "skus_placed": len(placed_skus_in_storage),
                 "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
                 "total_wasted_vol": total_wasted_volume,
             }
-            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export}
-            print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(skus_for_storage)} SKUs")
+            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export, "unassigned_skus": unassigned_skus}
+            print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(placed_skus_in_storage)} SKUs colocados, {len(unassigned_skus)} rebotados")
 
         params_dict = {
             "cycle_days": payload_data.cycle_days,

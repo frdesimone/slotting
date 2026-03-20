@@ -5,9 +5,19 @@ from slotting.models import SKU
 
 
 def sku_unit_area_mm2(sku: SKU) -> float:
-    # sku.height viene en cm. Lo pasamos a mm multiplicando por 10.0
-    height_mm = max(sku.height * 10.0, 1e-9)
-    volume_mm3 = sku.volume * 1e9
+    # Priorizar dimensiones físicas reales (ancho x largo) para coincidir con el Macro-Slotting
+    w = float(getattr(sku, "width", 0) or 0)
+    l = float(getattr(sku, "length", 0) or 0)
+
+    if w > 0 and l > 0:
+        # Las dimensiones vienen en cm. Las pasamos a mm (* 10.0) y calculamos el área
+        width_mm = w * 10.0
+        length_mm = l * 10.0
+        return width_mm * length_mm
+
+    # Fallback de seguridad si L o A están en cero: usar Volumen / Alto
+    height_mm = max(float(getattr(sku, "height", 0) or 0) * 10.0, 1e-9)
+    volume_mm3 = float(getattr(sku, "volume", 0) or 0) * 1e9
     return volume_mm3 / height_mm
 
 

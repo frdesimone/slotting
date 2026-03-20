@@ -506,19 +506,27 @@ def _build_allocation_context(
 ) -> dict[str, object]:
     max_trays_effective = config.max_trays if max_trays_limit is None else max_trays_limit
     sku_ids = subgroup.sku_ids
-    unit_area, unit_weight, unit_volume, heights, cycle_units, um_ratios = _build_sku_metrics(
-        sku_ids, sku_by_id
-    )
-    if getattr(config, "enforce_integer_replenishment", False):
-        for sku_id in sku_ids:
-            ur = float(um_ratios[sku_id])
-            if ur > 0:
-                repl_units = cycle_units[sku_id] / ur
-                if repl_units < 1.0:
-                    rounded_repl = 1.0 if repl_units >= getattr(config, "round_to_one_threshold", 0.25) else 0.0
-                else:
-                    rounded_repl = float(round(repl_units))
-                cycle_units[sku_id] = rounded_repl * ur
+    unit_area, unit_weight, unit_volume, heights, cycle_units, um_ratios = _build_sku_metrics(sku_ids, sku_by_id)
+
+    for sku_id in sku_ids:
+        ur = float(um_ratios.get(sku_id, 1.0)) or 1.0
+
+        # 1. Aplicar reglas de Cajas Enteras
+        if getattr(config, "enforce_integer_replenishment", False):
+            repl_units = cycle_units[sku_id] / ur
+            if repl_units < 1.0:
+                rounded_repl = 1.0 if repl_units >= getattr(config, "round_to_one_threshold", 0.25) else 0.0
+            else:
+                rounded_repl = float(round(repl_units))
+            cycle_units[sku_id] = rounded_repl * ur
+
+        # 2. SEGURO ANTI-FANTASMAS (Sincronización estricta con Macro)
+        # Si la demanda bajó a 0 (por falta de rotación o por redondeo),
+        # pero el SKU fue enviado al Micro, DEBE ubicarse físicamente.
+        # Le asignamos la cantidad mínima de supervivencia.
+        if cycle_units[sku_id] <= 0.001:
+            cycle_units[sku_id] = ur if getattr(config, "enforce_integer_replenishment", False) else 1.0
+
     total_area, total_weight = _compute_totals(sku_ids, cycle_units, unit_area, unit_weight)
     max_area, max_weight = tray_capacity(
         config.tray_base_area_max, config.tray_op_void, config.tray_weight_max

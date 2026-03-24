@@ -616,10 +616,12 @@ def _rescue_unassigned_skus(
         return []
 
     still_unassigned = []
+    print(f"      [Rescue Debug] {len(unassigned_sku_ids)} SKUs a rescatar, {len(final_trays)} trays existentes, qty_limit={qty_limit}")
 
     for sku_id in unassigned_sku_ids:
         sku = sku_by_id.get(str(sku_id).strip())
         if sku is None:
+            print(f"      [Rescue FAIL] SKU {sku_id}: no encontrado en sku_by_id")
             still_unassigned.append(sku_id)
             continue
 
@@ -660,7 +662,9 @@ def _rescue_unassigned_skus(
 
         placed = False
 
-        # Intento 1: meter en una bandeja existente que tenga espacio
+        # Intento 1: meter en una ubicación existente que tenga espacio
+        best_avail_area = 0.0
+        best_avail_weight = 0.0
         for tray in final_trays:
             tray_max_a = getattr(tray, "max_surface", None) or getattr(tray, "max_area", None)
             tray_max_a = float(tray_max_a) if tray_max_a is not None else float("inf")
@@ -668,6 +672,8 @@ def _rescue_unassigned_skus(
 
             available_area = tray_max_a - getattr(tray, "area_used", 0)
             available_weight = tray_max_w - getattr(tray, "weight_used", 0)
+            best_avail_area = max(best_avail_area, available_area)
+            best_avail_weight = max(best_avail_weight, available_weight)
 
             if total_area_needed <= available_area and total_weight_needed <= available_weight:
                 tray.items.append(TrayItem(
@@ -684,9 +690,10 @@ def _rescue_unassigned_skus(
                 tray.weight_used += total_weight_needed
                 tray.height = max(getattr(tray, "height", 0) or 0, unit_height)
                 placed = True
+                print(f"      [Rescue OK] SKU {sku_id}: colocado en tray existente ({getattr(tray, 'tray_id', '?')})")
                 break
 
-        # Intento 2: crear una bandeja nueva si hay espacio de qty_limit
+        # Intento 2: crear una ubicación nueva si hay espacio de qty_limit
         if not placed and len(final_trays) < qty_limit:
             max_area, max_weight_tray = tray_capacity(
                 config.tray_base_area_max, config.tray_op_void, config.tray_weight_max
@@ -714,6 +721,11 @@ def _rescue_unassigned_skus(
                 )
                 final_trays.append(new_tray)
                 placed = True
+                print(f"      [Rescue OK] SKU {sku_id}: nueva ubicación creada (rescue-{sku_id})")
+            else:
+                print(f"      [Rescue FAIL] SKU {sku_id}: no cabe en tray nueva. area_needed={total_area_needed:.0f} vs max={max_area:.0f}, weight_needed={total_weight_needed:.1f} vs max={max_weight_tray:.1f}")
+        elif not placed:
+            print(f"      [Rescue FAIL] SKU {sku_id}: no cabe en existentes (best_avail: area={best_avail_area:.0f} vs needed={total_area_needed:.0f}, weight={best_avail_weight:.1f} vs needed={total_weight_needed:.1f}) y qty_limit alcanzado ({len(final_trays)}>={qty_limit})")
 
         if not placed:
             still_unassigned.append(sku_id)
@@ -1128,33 +1140,39 @@ async def ejecutar_micro(
                     "items": location_items,
                 })
 
-            # --- KPI: Pedidos satisfechos (todos los SKUs del pedido presentes en este storage) ---
+            # --- KPI: Pedidos satisfechos por este storage ---
+            # De TODOS los pedidos, cuántos tienen TODOS sus SKUs colocados en este storage.
+            # Usa la lista completa de pedidos (orders), no la filtrada por storage.
             orders_satisfied = 0
-            total_orders = len(orders_for_storage)
-            for order in orders_for_storage:
+            total_orders = len(orders)
+            for order in orders:
                 order_sku_set = {str(s).strip() for s in order.sku_ids}
                 if order_sku_set and order_sku_set.issubset(placed_skus_in_storage):
                     orders_satisfied += 1
             orders_satisfied_pct = round((orders_satisfied / total_orders * 100), 2) if total_orders > 0 else 0.0
 
-            # --- KPI: Días de inventario promedio ---
+            # --- KPI: Días de inventario promedio (ponderado por demanda) ---
             # Consolidar unidades por SKU (puede estar en múltiples trays por splitting)
             stored_units_by_sku: dict[str, float] = {}
             for t in final_trays:
                 for item in getattr(t, "items", []):
                     sid = str(getattr(item, "sku_id", "")).strip()
                     stored_units_by_sku[sid] = stored_units_by_sku.get(sid, 0.0) + getattr(item, "units", 0.0)
-            # Para cada SKU: inventory_days = units_stored / daily_demand
-            inventory_days_list = []
+            # Promedio ponderado: cada SKU pesa según su demanda diaria
+            # Esto evita que SKUs de demanda ínfima (ceileados a 1) inflen el promedio
             period_days = payload_data.period_days or 180.0
+            weighted_days_sum = 0.0
+            total_daily_demand = 0.0
             for sid, stored_units in stored_units_by_sku.items():
                 sku_obj = skus_dict.get(sid)
                 if not sku_obj:
                     continue
                 daily_demand = sku_obj.units_sold_total / period_days if period_days > 0 else 0.0
                 if daily_demand > 0:
-                    inventory_days_list.append(stored_units / daily_demand)
-            avg_inventory_days = round(sum(inventory_days_list) / len(inventory_days_list), 1) if inventory_days_list else 0.0
+                    inv_days = min(stored_units / daily_demand, period_days)  # Capear al período
+                    weighted_days_sum += inv_days * daily_demand
+                    total_daily_demand += daily_demand
+            avg_inventory_days = round(weighted_days_sum / total_daily_demand, 1) if total_daily_demand > 0 else 0.0
 
             kpi_dict = {
                 "total_trays": total_trays,
@@ -1187,17 +1205,33 @@ async def ejecutar_micro(
         total_trays_agg = sum(r["kpi"].get("total_trays", 0) for r in results_by_storage.values())
         avg_occ_list = [r["kpi"].get("avg_area_occupancy_pct", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
         total_wasted_agg = sum(r["kpi"].get("total_wasted_vol", 0) for r in results_by_storage.values())
-        total_orders_satisfied_agg = sum(r["kpi"].get("orders_satisfied", 0) for r in results_by_storage.values())
-        total_orders_agg = sum(r["kpi"].get("total_orders", 0) for r in results_by_storage.values())
         inv_days_list = [r["kpi"].get("avg_inventory_days", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
+
+        # KPI global de pedidos: un pedido está satisfecho si TODOS sus SKUs están
+        # colocados en ALGÚN tipo de almacenamiento (cross-storage)
+        all_placed_skus = set()
+        for r in results_by_storage.values():
+            locs = r.get("locations", r.get("best_trays", []))
+            for loc in locs:
+                for item in (loc.get("items", []) if isinstance(loc, dict) else getattr(loc, "items", [])):
+                    sid = item.get("sku", "") if isinstance(item, dict) else getattr(item, "sku_id", "")
+                    all_placed_skus.add(str(sid).strip())
+        global_orders_satisfied = 0
+        total_orders_global = len(orders)
+        for order in orders:
+            order_sku_set = {str(s).strip() for s in order.sku_ids}
+            if order_sku_set and order_sku_set.issubset(all_placed_skus):
+                global_orders_satisfied += 1
+        global_orders_satisfied_pct = round(global_orders_satisfied / total_orders_global * 100, 2) if total_orders_global > 0 else 0.0
+
         agg_kpi = {
             "total_trays": total_trays_agg,
             "avg_area_occupancy_pct": sum(avg_occ_list) / len(avg_occ_list) if avg_occ_list else 0,
             "optimized": payload_data.optimize_trays,
             "total_wasted_vol": round(total_wasted_agg, 4),
-            "orders_satisfied": total_orders_satisfied_agg,
-            "orders_satisfied_pct": round(total_orders_satisfied_agg / total_orders_agg * 100, 2) if total_orders_agg > 0 else 0,
-            "total_orders": total_orders_agg,
+            "orders_satisfied": global_orders_satisfied,
+            "orders_satisfied_pct": global_orders_satisfied_pct,
+            "total_orders": total_orders_global,
             "avg_inventory_days": round(sum(inv_days_list) / len(inv_days_list), 1) if inv_days_list else 0,
         }
         # Guardar KPIs por storage en params para que el historial tenga detalle completo

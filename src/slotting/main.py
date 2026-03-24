@@ -34,6 +34,9 @@ from slotting.algorithms.micro.step7 import build_tray_plans
 from slotting.algorithms.micro.kpi_state import build_hybrid_kpi_state
 from slotting.algorithms.common.prep.loader import _filter_orders_by_skus
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig
+from slotting.algorithms.micro.group_score import estimate_cycle_units
+from slotting.algorithms.micro.utils import sku_unit_area_mm2, tray_capacity
+from slotting.models import Tray, TrayItem
 from .db.database import engine, Base, get_db
 from .db.repository import save_macro_execution, save_micro_execution, get_user_executions, get_macro_executions, get_micro_executions
 
@@ -597,6 +600,127 @@ async def ejecutar_macro(
         if path_file.exists(): path_file.unlink()
 
 
+def _rescue_unassigned_skus(
+    unassigned_sku_ids: list[str],
+    final_trays: list,
+    sku_by_id: dict[str, object],
+    storage_cfg: object,
+    config: MicroSlottingConfig,
+    qty_limit: int,
+) -> list[str]:
+    """Pasada de rescate: meter SKUs huérfanos en bandejas existentes o nuevas,
+    ignorando constraints de calidad (afinidad, height delta, score delta)
+    y respetando solo constraints físicas (área, peso).
+    Retorna la lista de SKUs que aún no pudieron ser colocados."""
+    if not unassigned_sku_ids:
+        return []
+
+    still_unassigned = []
+
+    for sku_id in unassigned_sku_ids:
+        sku = sku_by_id.get(str(sku_id).strip())
+        if sku is None:
+            still_unassigned.append(sku_id)
+            continue
+
+        # Calcular métricas físicas del SKU
+        unit_area = sku_unit_area_mm2(sku)
+        unit_weight = float(getattr(sku, "weight", 0) or 0)
+        unit_volume = float(getattr(sku, "volume", 0) or 0)
+        unit_height = float(getattr(sku, "height", 0) or 0)
+        cycle_units = estimate_cycle_units(sku)
+        if cycle_units <= 0:
+            cycle_units = 1.0
+
+        um_ratio = float(getattr(sku, "um_ratio", 1.0) or getattr(sku, "boxes_per_m3", 1.0) or 1.0)
+        if getattr(config, "enforce_integer_replenishment", False) and um_ratio > 0:
+            repl = cycle_units / um_ratio
+            if repl < 1.0:
+                cycle_units = um_ratio if repl >= getattr(config, "round_to_one_threshold", 0.25) else um_ratio
+            else:
+                cycle_units = round(repl) * um_ratio
+
+        # Calcular área y peso con apilamiento
+        max_h_loc_cm = config.max_h_loc * 100.0 if config.max_h_loc > 0 else float("inf")
+        max_h_storage_cm = config.max_h_storage * 100.0 if config.max_h_storage > 0 else float("inf")
+        if config.is_variable_height:
+            h_limit = unit_height
+            if max_h_storage_cm < float("inf"):
+                h_limit = min(h_limit, max_h_storage_cm)
+        else:
+            h_limit = max_h_loc_cm
+        max_vertical = int(h_limit // unit_height) if unit_height > 0 else 1
+        if max_vertical < 1:
+            max_vertical = 1
+        actual_stack = min(config.stackability_factor, max_vertical)
+
+        stacks_needed = math.ceil(cycle_units / actual_stack) if actual_stack > 0 else cycle_units
+        total_area_needed = stacks_needed * unit_area
+        total_weight_needed = cycle_units * unit_weight
+
+        placed = False
+
+        # Intento 1: meter en una bandeja existente que tenga espacio
+        for tray in final_trays:
+            tray_max_a = getattr(tray, "max_surface", None) or getattr(tray, "max_area", None)
+            tray_max_a = float(tray_max_a) if tray_max_a is not None else float("inf")
+            tray_max_w = getattr(tray, "max_weight", float("inf")) or float("inf")
+
+            available_area = tray_max_a - getattr(tray, "area_used", 0)
+            available_weight = tray_max_w - getattr(tray, "weight_used", 0)
+
+            if total_area_needed <= available_area and total_weight_needed <= available_weight:
+                tray.items.append(TrayItem(
+                    sku_id=sku_id,
+                    units=cycle_units,
+                    unit_volume=unit_volume,
+                    unit_weight=unit_weight,
+                    total_volume=cycle_units * unit_volume,
+                    total_weight=total_weight_needed,
+                    unit_area=unit_area,
+                    total_area=total_area_needed,
+                ))
+                tray.area_used += total_area_needed
+                tray.weight_used += total_weight_needed
+                tray.height = max(getattr(tray, "height", 0) or 0, unit_height)
+                placed = True
+                break
+
+        # Intento 2: crear una bandeja nueva si hay espacio de qty_limit
+        if not placed and len(final_trays) < qty_limit:
+            max_area, max_weight_tray = tray_capacity(
+                config.tray_base_area_max, config.tray_op_void, config.tray_weight_max
+            )
+            if total_area_needed <= max_area and total_weight_needed <= max_weight_tray:
+                new_tray = Tray(
+                    tray_id=f"rescue-{sku_id}",
+                    group_id="rescue",
+                    subgroup_id="rescue",
+                    height=unit_height,
+                    max_area=max_area,
+                    max_weight=max_weight_tray,
+                    area_used=total_area_needed,
+                    weight_used=total_weight_needed,
+                    items=[TrayItem(
+                        sku_id=sku_id,
+                        units=cycle_units,
+                        unit_volume=unit_volume,
+                        unit_weight=unit_weight,
+                        total_volume=cycle_units * unit_volume,
+                        total_weight=total_weight_needed,
+                        unit_area=unit_area,
+                        total_area=total_area_needed,
+                    )],
+                )
+                final_trays.append(new_tray)
+                placed = True
+
+        if not placed:
+            still_unassigned.append(sku_id)
+
+    return still_unassigned
+
+
 @app.post("/api/v1/micro")
 async def ejecutar_micro(
     file: UploadFile = File(...),
@@ -822,6 +946,26 @@ async def ejecutar_micro(
                     placed_skus_in_storage.add(str(getattr(i, "sku_id", "")).strip())
             unassigned_skus = list(skus_for_storage_ids - placed_skus_in_storage)
 
+            # --- RESCATE: forzar SKUs huérfanos en bandejas (solo constraints físicas) ---
+            if unassigned_skus:
+                print(f"   🔄 [Rescue] {st_key}: intentando rescatar {len(unassigned_skus)} SKUs no asignados...")
+                unassigned_skus = _rescue_unassigned_skus(
+                    unassigned_sku_ids=unassigned_skus,
+                    final_trays=final_trays,
+                    sku_by_id=sku_by_id,
+                    storage_cfg=storage_cfg,
+                    config=config,
+                    qty_limit=qty_limit,
+                )
+                # Recalcular placed después del rescate
+                prev_placed = len(placed_skus_in_storage)
+                placed_skus_in_storage = set()
+                for t in final_trays:
+                    for i in getattr(t, "items", []):
+                        placed_skus_in_storage.add(str(getattr(i, "sku_id", "")).strip())
+                rescued_count = len(placed_skus_in_storage) - prev_placed
+                print(f"   ✅ [Rescue] {st_key}: {rescued_count} SKUs rescatados, {len(unassigned_skus)} siguen sin asignar")
+
             if not final_trays:
                 results_by_storage[st_key] = {
                     "kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": 0, "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays, "total_wasted_vol": 0},
@@ -956,11 +1100,15 @@ async def ejecutar_micro(
                         "replenishment_units": round(qty_boxes, 2),  # Al usuario le mostramos cajas
                     })
 
-                # Aire desperdiciado: diferencia entre volumen físico máximo y volumen utilizado
-                max_h_m = float(max_h_loc) if not is_var_h else float(max_h_storage)
-                if max_h_m <= 0:
-                    max_h_m = 0.5
-                total_tray_vol = max_h_m * max_surface
+                # Aire desperdiciado: usar altura real de los items (no la max del storage)
+                if is_var_h:
+                    # Altura variable: el aire se mide contra la altura real del SKU más alto en esta bandeja
+                    effective_h_m = (tray_max_height / 100.0) if tray_max_height > 0 else max_h_loc
+                else:
+                    effective_h_m = max_h_loc
+                if effective_h_m <= 0:
+                    effective_h_m = 0.5
+                total_tray_vol = effective_h_m * max_surface
                 tray_wasted_vol = max(0.0, total_tray_vol - location_volume)
                 total_wasted_volume += tray_wasted_vol
 
@@ -980,6 +1128,34 @@ async def ejecutar_micro(
                     "items": location_items,
                 })
 
+            # --- KPI: Pedidos satisfechos (todos los SKUs del pedido presentes en este storage) ---
+            orders_satisfied = 0
+            total_orders = len(orders_for_storage)
+            for order in orders_for_storage:
+                order_sku_set = {str(s).strip() for s in order.sku_ids}
+                if order_sku_set and order_sku_set.issubset(placed_skus_in_storage):
+                    orders_satisfied += 1
+            orders_satisfied_pct = round((orders_satisfied / total_orders * 100), 2) if total_orders > 0 else 0.0
+
+            # --- KPI: Días de inventario promedio ---
+            # Consolidar unidades por SKU (puede estar en múltiples trays por splitting)
+            stored_units_by_sku: dict[str, float] = {}
+            for t in final_trays:
+                for item in getattr(t, "items", []):
+                    sid = str(getattr(item, "sku_id", "")).strip()
+                    stored_units_by_sku[sid] = stored_units_by_sku.get(sid, 0.0) + getattr(item, "units", 0.0)
+            # Para cada SKU: inventory_days = units_stored / daily_demand
+            inventory_days_list = []
+            period_days = payload_data.period_days or 180.0
+            for sid, stored_units in stored_units_by_sku.items():
+                sku_obj = skus_dict.get(sid)
+                if not sku_obj:
+                    continue
+                daily_demand = sku_obj.units_sold_total / period_days if period_days > 0 else 0.0
+                if daily_demand > 0:
+                    inventory_days_list.append(stored_units / daily_demand)
+            avg_inventory_days = round(sum(inventory_days_list) / len(inventory_days_list), 1) if inventory_days_list else 0.0
+
             kpi_dict = {
                 "total_trays": total_trays,
                 "total_locations": total_trays,
@@ -987,6 +1163,10 @@ async def ejecutar_micro(
                 "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
                 "total_wasted_vol": total_wasted_volume,
+                "orders_satisfied": orders_satisfied,
+                "orders_satisfied_pct": orders_satisfied_pct,
+                "total_orders": total_orders,
+                "avg_inventory_days": avg_inventory_days,
             }
             results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export, "unassigned_skus": unassigned_skus}
             print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(placed_skus_in_storage)} SKUs colocados, {len(unassigned_skus)} rebotados")
@@ -1006,11 +1186,22 @@ async def ejecutar_micro(
         all_trays = [loc for r in results_by_storage.values() for loc in r.get("locations", r.get("best_trays", []))]
         total_trays_agg = sum(r["kpi"].get("total_trays", 0) for r in results_by_storage.values())
         avg_occ_list = [r["kpi"].get("avg_area_occupancy_pct", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
+        total_wasted_agg = sum(r["kpi"].get("total_wasted_vol", 0) for r in results_by_storage.values())
+        total_orders_satisfied_agg = sum(r["kpi"].get("orders_satisfied", 0) for r in results_by_storage.values())
+        total_orders_agg = sum(r["kpi"].get("total_orders", 0) for r in results_by_storage.values())
+        inv_days_list = [r["kpi"].get("avg_inventory_days", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
         agg_kpi = {
             "total_trays": total_trays_agg,
             "avg_area_occupancy_pct": sum(avg_occ_list) / len(avg_occ_list) if avg_occ_list else 0,
             "optimized": payload_data.optimize_trays,
+            "total_wasted_vol": round(total_wasted_agg, 4),
+            "orders_satisfied": total_orders_satisfied_agg,
+            "orders_satisfied_pct": round(total_orders_satisfied_agg / total_orders_agg * 100, 2) if total_orders_agg > 0 else 0,
+            "total_orders": total_orders_agg,
+            "avg_inventory_days": round(sum(inv_days_list) / len(inv_days_list), 1) if inv_days_list else 0,
         }
+        # Guardar KPIs por storage en params para que el historial tenga detalle completo
+        params_dict["kpis_by_storage"] = {st: r["kpi"] for st, r in results_by_storage.items()}
         exec_id = save_micro_execution(db, CURRENT_USER_ID, params_dict, agg_kpi, all_trays)
 
         response_data = {"status": "success", "results_by_storage": results_by_storage}

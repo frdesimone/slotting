@@ -961,13 +961,16 @@ async def ejecutar_micro(
             # --- RESCATE: forzar SKUs huérfanos en bandejas (solo constraints físicas) ---
             if unassigned_skus:
                 print(f"   🔄 [Rescue] {st_key}: intentando rescatar {len(unassigned_skus)} SKUs no asignados...")
+                # Permitir crear bandejas adicionales más allá del qty_limit para garantizar
+                # que todos los SKUs se ubiquen. El rescate puede exceder el límite nominal.
+                rescue_qty_limit = len(final_trays) + len(unassigned_skus)
                 unassigned_skus = _rescue_unassigned_skus(
                     unassigned_sku_ids=unassigned_skus,
                     final_trays=final_trays,
                     sku_by_id=sku_by_id,
                     storage_cfg=storage_cfg,
                     config=config,
-                    qty_limit=qty_limit,
+                    qty_limit=rescue_qty_limit,
                 )
                 # Recalcular placed después del rescate
                 prev_placed = len(placed_skus_in_storage)

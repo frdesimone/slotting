@@ -946,9 +946,10 @@ async def ejecutar_micro(
                 final_trays = compacted_trays
 
             # --- CORTE FINAL POR CAPACIDAD FÍSICA REAL ---
-            qty_limit = int(getattr(storage_cfg, "qty", None) or getattr(storage_cfg, "max_trays", 999999) or 999999)
+            _raw_qty = getattr(storage_cfg, "qty", None) or getattr(storage_cfg, "max_trays", None)
+            qty_limit = int(_raw_qty) if (_raw_qty is not None and int(_raw_qty) > 0) else 999999
             if len(final_trays) > qty_limit:
-                print(f"⚠️ Recortando de {len(final_trays)} a {qty_limit} bandejas/ubicaciones en {st_key}")
+                print(f"⚠️ Recortando de {len(final_trays)} a {qty_limit} ubicaciones en {st_key}")
                 final_trays = final_trays[:qty_limit]
 
             skus_for_storage_ids = {str(s.sku_id).strip() for s in skus_for_storage}
@@ -961,9 +962,10 @@ async def ejecutar_micro(
             # --- RESCATE: forzar SKUs huérfanos en bandejas (solo constraints físicas) ---
             if unassigned_skus:
                 print(f"   🔄 [Rescue] {st_key}: intentando rescatar {len(unassigned_skus)} SKUs no asignados...")
-                # Permitir crear bandejas adicionales más allá del qty_limit para garantizar
-                # que todos los SKUs se ubiquen. El rescate puede exceder el límite nominal.
-                rescue_qty_limit = len(final_trays) + len(unassigned_skus)
+                # Respetar el límite físico real. Si el pipeline llenó todas las ubicaciones,
+                # rescue intenta meter SKUs en las existentes (pueden tener espacio libre).
+                # Si no caben, cascadean al siguiente storage. No se crean ubicaciones fantasma.
+                rescue_qty_limit = qty_limit
                 unassigned_skus = _rescue_unassigned_skus(
                     unassigned_sku_ids=unassigned_skus,
                     final_trays=final_trays,

@@ -665,7 +665,13 @@ def _rescue_unassigned_skus(
         # Intento 1: meter en una ubicación existente que tenga espacio
         best_avail_area = 0.0
         best_avail_weight = 0.0
+        _is_mono = not getattr(config, "is_multiproduct", True)
         for tray in final_trays:
+            # Monoproducto: solo cabe en ubicaciones vacías o que ya tengan este mismo SKU
+            if _is_mono:
+                _tray_sku_ids = {str(getattr(_i, "sku_id", "")).strip() for _i in getattr(tray, "items", [])}
+                if _tray_sku_ids and _tray_sku_ids != {str(sku_id).strip()}:
+                    continue
             tray_max_a = getattr(tray, "max_surface", None) or getattr(tray, "max_area", None)
             tray_max_a = float(tray_max_a) if tray_max_a is not None else float("inf")
             tray_max_w = getattr(tray, "max_weight", float("inf")) or float("inf")
@@ -791,6 +797,13 @@ async def ejecutar_micro(
         skus_list = [s for s in skus_list if str(s.sku_id).strip() in sku_ids_in_payload]
         orders = _filter_orders_by_skus(orders, skus_list, stats)
         sku_by_id = {str(s.sku_id).strip(): s for s in skus_list}
+
+        # Precomputar cantidad de pedidos por SKU (para detalles de no-asignados)
+        orders_per_sku: dict[str, int] = {}
+        for _ord in orders:
+            for _sid in _ord.sku_ids:
+                _s = str(_sid).strip()
+                orders_per_sku[_s] = orders_per_sku.get(_s, 0) + 1
 
         print(f"🚀 [Micro] {len(skus_list)} SKUs cargados, {len(payload_data.storages)} tipos de almacenamiento.")
 
@@ -983,12 +996,48 @@ async def ejecutar_micro(
                 rescued_count = len(placed_skus_in_storage) - prev_placed
                 print(f"   ✅ [Rescue] {st_key}: {rescued_count} SKUs rescatados, {len(unassigned_skus)} siguen sin asignar")
 
+            # --- Detalles de SKUs no asignados (para diagnóstico en frontend) ---
+            _max_tray_area, _max_tray_weight = tray_capacity(config.tray_base_area_max, config.tray_op_void, config.tray_weight_max)
+            unassigned_skus_details = []
+            for _uid in unassigned_skus:
+                _uobj = sku_by_id.get(str(_uid).strip())
+                if not _uobj:
+                    unassigned_skus_details.append({"sku_id": _uid, "reason": "SKU no encontrado en datos"})
+                    continue
+                _cu = estimate_cycle_units(_uobj)
+                _ua = sku_unit_area_mm2(_uobj)
+                _uw = float(getattr(_uobj, "weight", 0) or 0)
+                _stacks = max(1, math.ceil(_cu / max(1, config.stackability_factor)))
+                _area_needed = _stacks * _ua
+                _weight_needed = _cu * _uw
+                if _area_needed > _max_tray_area:
+                    _reason = f"Área de ciclo ({_area_needed/1e6:.3f} m²) supera capacidad de ubicación ({_max_tray_area/1e6:.3f} m²)"
+                elif _weight_needed > _max_tray_weight:
+                    _reason = f"Peso de ciclo ({_weight_needed:.1f} kg) supera límite ({_max_tray_weight:.1f} kg)"
+                else:
+                    _reason = "Sin espacio disponible (ubicaciones llenas o límite de capacidad alcanzado)"
+                unassigned_skus_details.append({
+                    "sku_id": _uid,
+                    "description": getattr(_uobj, "description", ""),
+                    "rotation": round(float(getattr(_uobj, "rot", 0) or 0), 4),
+                    "height_cm": round(float(getattr(_uobj, "height", 0) or 0), 2),
+                    "width_cm": round(float(getattr(_uobj, "width", 0) or 0), 2),
+                    "length_cm": round(float(getattr(_uobj, "length", 0) or 0), 2),
+                    "weight_kg": round(float(getattr(_uobj, "weight", 0) or 0), 2),
+                    "volume_m3": round(float(getattr(_uobj, "volume", 0) or 0), 4),
+                    "cycle_units": round(_cu, 2),
+                    "cycle_volume_m3": round(_cu * float(getattr(_uobj, "volume", 0) or 0), 4),
+                    "orders_count": orders_per_sku.get(str(_uid).strip(), 0),
+                    "reason": _reason,
+                })
+
             if not final_trays:
                 results_by_storage[st_key] = {
                     "kpi": {"total_trays": 0, "total_locations": 0, "skus_placed": 0, "avg_area_occupancy_pct": 0, "optimized": payload_data.optimize_trays, "total_wasted_vol": 0},
                     "best_trays": [],
                     "locations": [],
-                    "unassigned_skus": unassigned_skus
+                    "unassigned_skus": unassigned_skus,
+                    "unassigned_skus_details": unassigned_skus_details,
                 }
                 continue
 
@@ -1010,9 +1059,10 @@ async def ejecutar_micro(
             max_volume = max_surface * (max_h_storage if is_var_h else max_h_loc)
 
             locations_export = []
+            _loc_counter = 1
             for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True):
-                raw_tray_id = getattr(t, "tray_id", "N/A")
-                clean_tray_id = str(raw_tray_id).replace("unassigned-unassigned-", f"{st_key}-1-")
+                clean_tray_id = f"{st_key}-{_loc_counter}"
+                _loc_counter += 1
                 items_export = []
                 for i in t.items:
                     vol = getattr(i, "total_volume", 0) or 0
@@ -1115,6 +1165,7 @@ async def ejecutar_micro(
                         "surface": round(item_surface, 4),
                         "volume": round(item_vol, 4),
                         "replenishment_units": round(qty_boxes, 2),  # Al usuario le mostramos cajas
+                        "rotation": round(float(getattr(sku_obj, "rot", 0) or 0), 4),
                     })
 
                 # Aire desperdiciado: usar altura real de los items (no la max del storage)
@@ -1129,11 +1180,14 @@ async def ejecutar_micro(
                 tray_wasted_vol = max(0.0, total_tray_vol - location_volume)
                 total_wasted_volume += tray_wasted_vol
 
+                _avg_rot = round(sum(li.get("rotation", 0) for li in location_items) / len(location_items), 4) if location_items else 0.0
                 locations_export.append({
                     "location_id": clean_tray_id,
                     "occupancy_pct": round(get_occ(t), 2),
                     "max_height": tray_max_height,
                     "wasted_vol": tray_wasted_vol,
+                    "sku_count": len(location_items),
+                    "avg_rotation": _avg_rot,
                     "metrics": {
                         "used_weight": round(location_weight, 2),
                         "max_weight": round(max_weight, 2),
@@ -1191,7 +1245,7 @@ async def ejecutar_micro(
                 "total_orders": total_orders,
                 "avg_inventory_days": avg_inventory_days,
             }
-            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export, "unassigned_skus": unassigned_skus}
+            results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export, "unassigned_skus": unassigned_skus, "unassigned_skus_details": unassigned_skus_details}
             print(f"   ✅ [Micro] {st_key}: {total_trays} bandejas, {len(placed_skus_in_storage)} SKUs colocados, {len(unassigned_skus)} rebotados")
 
         params_dict = {

@@ -104,7 +104,12 @@ def detect_outliers(
                             "description": getattr(sku, "description", "") or "",
                             "value": v,
                         })
-                items.sort(key=lambda x: x["value"], reverse=True)
+                # Ordenar por distancia al rango válido: las violaciones más extremas primero,
+                # independientemente de si están por encima o por debajo del límite.
+                items.sort(
+                    key=lambda x: (lower_bound - x["value"]) if x["value"] < lower_bound else (x["value"] - upper_bound),
+                    reverse=True,
+                )
 
         elif target == "order":
             attribute = attribute or "lines"

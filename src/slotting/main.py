@@ -342,10 +342,16 @@ async def detectar_outliers_endpoint(
                     it = {**it, "description": sku_desc(sku)}
                 enriched.append(it)
             categories.append({"id": rule_id, "name": name, "target": target, "attribute": attribute, "items": enriched})
+        unique_categories = sorted({
+            str(getattr(s, "category", "") or "").strip()
+            for s in skus_list
+            if str(getattr(s, "category", "") or "").strip()
+        })
         response_data = {
             "status": "success",
             "summary": summary_stats,
             "categories": categories,
+            "unique_categories": unique_categories,
             "validation": {
                 "maestro": stats.maestro_validation.__dict__ if getattr(stats, "maestro_validation", None) else None,
                 "pedidos": stats.pedidos_validation.__dict__ if getattr(stats, "pedidos_validation", None) else None,

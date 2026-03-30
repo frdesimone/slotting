@@ -1064,6 +1064,22 @@ async def ejecutar_micro(
             max_surface = max_w * max_l
             max_volume = max_surface * (max_h_storage if is_var_h else max_h_loc)
 
+            # Pre-computar días de inventario por SKU (para incluir en cada item del export)
+            _stored_units_by_sku: dict[str, float] = {}
+            for _t in final_trays:
+                for _item in getattr(_t, "items", []):
+                    _sid = str(getattr(_item, "sku_id", "")).strip()
+                    _stored_units_by_sku[_sid] = _stored_units_by_sku.get(_sid, 0.0) + getattr(_item, "units", 0.0)
+            _period = payload_data.period_days or 180.0
+            inv_days_by_sku: dict[str, float] = {}
+            for _sid, _su in _stored_units_by_sku.items():
+                _sobj = skus_dict.get(_sid)
+                if not _sobj:
+                    continue
+                _dd = _sobj.units_sold_total / _period if _period > 0 else 0.0
+                if _dd > 0:
+                    inv_days_by_sku[_sid] = round(min(_su / _dd, _period), 1)
+
             locations_export = []
             _loc_counter = 1
             for t in sorted(final_trays, key=lambda x: get_occ(x), reverse=True):
@@ -1172,6 +1188,7 @@ async def ejecutar_micro(
                         "volume": round(item_vol, 4),
                         "replenishment_units": round(qty_boxes, 2),  # Al usuario le mostramos cajas
                         "rotation": round(float(getattr(sku_obj, "rot", 0) or 0), 4),
+                        "inv_days": inv_days_by_sku.get(str(sku_id).strip(), 0.0),
                     })
 
                 # Aire desperdiciado: usar altura real de los items (no la max del storage)

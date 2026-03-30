@@ -1185,7 +1185,7 @@ async def ejecutar_micro(
                         "description": item.get("description", ""),
                         "weight": round(item_total_weight, 2),
                         "surface": round(item_surface, 4),
-                        "volume": round(item_vol, 4),
+                        "volume": round(item_vol, 3),
                         "replenishment_units": round(qty_boxes, 2),  # Al usuario le mostramos cajas
                         "rotation": round(float(getattr(sku_obj, "rot", 0) or 0), 4),
                         "inv_days": inv_days_by_sku.get(str(sku_id).strip(), 0.0),

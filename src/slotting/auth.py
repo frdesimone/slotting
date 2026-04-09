@@ -129,7 +129,9 @@ def bootstrap_users():
 
     db = SessionLocal()
     try:
-        # 1. Seed del admin
+        print(f"🔐 [auth] Bootstrap iniciado. ADMIN_USERNAME={ADMIN_USERNAME!r}")
+
+        # 1. Seed del admin (idempotente + auto-reset de password)
         admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not admin:
             admin = User(
@@ -141,14 +143,16 @@ def bootstrap_users():
                 is_active=True,
             )
             db.add(admin)
-            print(f"🔐 [auth] Admin '{ADMIN_USERNAME}' creado.")
+            print(f"🔐 [auth] Admin '{ADMIN_USERNAME}' CREADO.")
         else:
-            # Si el admin existe pero le falta password (caso migración desde mock), seteala
-            if not admin.password_hash:
-                admin.password_hash = hash_password(ADMIN_PASSWORD)
-            if not admin.is_admin:
-                admin.is_admin = True
+            # El admin ya existe — siempre re-asegurar password, flags y rol.
+            # Esto permite resetear el password cambiando ADMIN_PASSWORD en el env y redeployando.
+            admin.password_hash = hash_password(ADMIN_PASSWORD)
+            admin.is_admin = True
             admin.is_active = True
+            if not admin.email:
+                admin.email = f"{ADMIN_USERNAME}@slotting.local"
+            print(f"🔐 [auth] Admin '{ADMIN_USERNAME}' ACTUALIZADO (password resincronizado desde env).")
 
         # 2. Migrar el user mock legacy a 'bremen'
         MOCK_ID = "frontend_user_mock_123"

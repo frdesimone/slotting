@@ -58,7 +58,12 @@ Base.metadata.create_all(bind=engine)
 try:
     bootstrap_users()
 except Exception as _e:
-    logging.getLogger("slotting").warning(f"bootstrap_users falló en startup: {_e}")
+    import traceback
+    logging.getLogger("slotting").error(
+        f"bootstrap_users falló en startup: {_e}\n{traceback.format_exc()}"
+    )
+    print(f"❌ [auth] bootstrap_users FALLÓ: {_e}")
+    print(traceback.format_exc())
 
 logger = logging.getLogger("slotting")
 
@@ -149,6 +154,23 @@ def guardar_temp(upload_file: UploadFile) -> Path:
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "API de Slotting operativa."}
+
+
+@app.get("/api/v1/auth/debug")
+def auth_debug(db: Session = Depends(get_db)):
+    """Diagnóstico sin secretos: confirma que el admin existe y puede loguear.
+    No devuelve hashes ni IDs sensibles."""
+    from .auth import ADMIN_USERNAME
+    admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
+    total_users = db.query(User).count()
+    return {
+        "expected_admin_username": ADMIN_USERNAME,
+        "admin_exists": admin is not None,
+        "admin_has_password_hash": bool(admin and admin.password_hash),
+        "admin_is_active": bool(admin and admin.is_active),
+        "admin_is_admin": bool(admin and admin.is_admin),
+        "total_users": total_users,
+    }
 
 
 def _safe_json(val):

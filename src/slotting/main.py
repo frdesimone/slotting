@@ -1427,16 +1427,77 @@ async def ejecutar_micro(
                     total_daily_demand += daily_demand
             avg_inventory_days = round(weighted_days_sum / total_daily_demand, 1) if total_daily_demand > 0 else 0.0
 
+            # --- KPI: Líneas pickeables ---
+            # Línea = (pedido, SKU). Una línea es pickeable en este storage si su SKU está colocado acá.
+            total_lines = sum(len(o.sku_ids) for o in orders)
+            pickable_lines = 0
+            for order in orders:
+                for _sku in order.sku_ids:
+                    if str(_sku).strip() in placed_skus_in_storage:
+                        pickable_lines += 1
+            pickable_lines_pct = round(pickable_lines / total_lines * 100, 2) if total_lines > 0 else 0.0
+
+            # --- KPI: Ocupación volumétrica (complemento del aire desperdiciado) ---
+            used_volume_m3 = sum(
+                (loc.get("metrics", {}).get("used_volume", 0.0) or 0.0)
+                for loc in locations_export
+            )
+            # Capacidad total del storage = max_trays configurado × volumen por ubicación
+            _storage_max_trays = int(getattr(storage_cfg, "max_trays", 0) or 0)
+            total_available_volume_m3 = _storage_max_trays * max_volume if _storage_max_trays > 0 else 0.0
+            volume_occupancy_pct = (
+                round(used_volume_m3 / total_available_volume_m3 * 100, 2)
+                if total_available_volume_m3 > 0 else 0.0
+            )
+
+            # --- KPI: SKUs ubicados (# y %) ---
+            total_skus_universe = len(skus_list)
+            skus_placed_count = len(placed_skus_in_storage)
+            skus_placed_pct = (
+                round(skus_placed_count / total_skus_universe * 100, 2)
+                if total_skus_universe > 0 else 0.0
+            )
+
+            # --- KPI: Ubicaciones utilizadas (# y %) ---
+            locations_used_pct = (
+                round(total_trays / _storage_max_trays * 100, 2)
+                if _storage_max_trays > 0 else 0.0
+            )
+
+            # --- KPI: Peso utilizado (kg y %) ---
+            used_weight_kg = sum(
+                (loc.get("metrics", {}).get("used_weight", 0.0) or 0.0)
+                for loc in locations_export
+            )
+            total_weight_capacity_kg = _storage_max_trays * max_weight if _storage_max_trays > 0 else 0.0
+            weight_used_pct = (
+                round(used_weight_kg / total_weight_capacity_kg * 100, 2)
+                if total_weight_capacity_kg > 0 else 0.0
+            )
+
             kpi_dict = {
                 "total_trays": total_trays,
                 "total_locations": total_trays,
-                "skus_placed": len(placed_skus_in_storage),
+                "skus_placed": skus_placed_count,
+                "skus_placed_pct": skus_placed_pct,
+                "total_skus_universe": total_skus_universe,
                 "avg_area_occupancy_pct": round(avg_occupancy, 2),
                 "optimized": payload_data.optimize_trays,
                 "total_wasted_vol": total_wasted_volume,
+                "used_volume_m3": round(used_volume_m3, 4),
+                "total_available_volume_m3": round(total_available_volume_m3, 4),
+                "volume_occupancy_pct": volume_occupancy_pct,
+                "used_weight_kg": round(used_weight_kg, 2),
+                "total_weight_capacity_kg": round(total_weight_capacity_kg, 2),
+                "weight_used_pct": weight_used_pct,
+                "max_locations": _storage_max_trays,
+                "locations_used_pct": locations_used_pct,
                 "orders_satisfied": orders_satisfied,
                 "orders_satisfied_pct": orders_satisfied_pct,
                 "total_orders": total_orders,
+                "pickable_lines": pickable_lines,
+                "pickable_lines_pct": pickable_lines_pct,
+                "total_lines": total_lines,
                 "avg_inventory_days": avg_inventory_days,
             }
             results_by_storage[st_key] = {"kpi": kpi_dict, "best_trays": locations_export, "locations": locations_export, "unassigned_skus": unassigned_skus, "unassigned_skus_details": unassigned_skus_details}
@@ -1460,6 +1521,24 @@ async def ejecutar_micro(
         total_wasted_agg = sum(r["kpi"].get("total_wasted_vol", 0) for r in results_by_storage.values())
         inv_days_list = [r["kpi"].get("avg_inventory_days", 0) for r in results_by_storage.values() if r["kpi"].get("total_trays", 0) > 0]
 
+        # KPIs nuevos agregados globalmente
+        used_vol_agg = sum(r["kpi"].get("used_volume_m3", 0.0) for r in results_by_storage.values())
+        total_available_vol_agg = sum(r["kpi"].get("total_available_volume_m3", 0.0) for r in results_by_storage.values())
+        volume_occupancy_pct_global = (
+            round(used_vol_agg / total_available_vol_agg * 100, 2) if total_available_vol_agg > 0 else 0.0
+        )
+
+        used_weight_agg = sum(r["kpi"].get("used_weight_kg", 0.0) for r in results_by_storage.values())
+        total_weight_cap_agg = sum(r["kpi"].get("total_weight_capacity_kg", 0.0) for r in results_by_storage.values())
+        weight_used_pct_global = (
+            round(used_weight_agg / total_weight_cap_agg * 100, 2) if total_weight_cap_agg > 0 else 0.0
+        )
+
+        max_locations_agg = sum(r["kpi"].get("max_locations", 0) for r in results_by_storage.values())
+        locations_used_pct_global = (
+            round(total_trays_agg / max_locations_agg * 100, 2) if max_locations_agg > 0 else 0.0
+        )
+
         # KPI global de pedidos: un pedido está satisfecho si TODOS sus SKUs están
         # colocados en ALGÚN tipo de almacenamiento (cross-storage)
         all_placed_skus = set()
@@ -1477,14 +1556,47 @@ async def ejecutar_micro(
                 global_orders_satisfied += 1
         global_orders_satisfied_pct = round(global_orders_satisfied / total_orders_global * 100, 2) if total_orders_global > 0 else 0.0
 
+        # Líneas pickeables global: cualquier SKU colocado en cualquier storage
+        total_lines_global = sum(len(o.sku_ids) for o in orders)
+        pickable_lines_global = 0
+        for order in orders:
+            for _sku in order.sku_ids:
+                if str(_sku).strip() in all_placed_skus:
+                    pickable_lines_global += 1
+        pickable_lines_pct_global = (
+            round(pickable_lines_global / total_lines_global * 100, 2) if total_lines_global > 0 else 0.0
+        )
+
+        # SKUs ubicados global (%)
+        total_skus_universe_global = len(skus_list)
+        skus_placed_global = len(all_placed_skus)
+        skus_placed_pct_global = (
+            round(skus_placed_global / total_skus_universe_global * 100, 2)
+            if total_skus_universe_global > 0 else 0.0
+        )
+
         agg_kpi = {
             "total_trays": total_trays_agg,
+            "max_locations": max_locations_agg,
+            "locations_used_pct": locations_used_pct_global,
+            "skus_placed": skus_placed_global,
+            "skus_placed_pct": skus_placed_pct_global,
+            "total_skus_universe": total_skus_universe_global,
             "avg_area_occupancy_pct": sum(avg_occ_list) / len(avg_occ_list) if avg_occ_list else 0,
             "optimized": payload_data.optimize_trays,
             "total_wasted_vol": round(total_wasted_agg, 4),
+            "used_volume_m3": round(used_vol_agg, 4),
+            "total_available_volume_m3": round(total_available_vol_agg, 4),
+            "volume_occupancy_pct": volume_occupancy_pct_global,
+            "used_weight_kg": round(used_weight_agg, 2),
+            "total_weight_capacity_kg": round(total_weight_cap_agg, 2),
+            "weight_used_pct": weight_used_pct_global,
             "orders_satisfied": global_orders_satisfied,
             "orders_satisfied_pct": global_orders_satisfied_pct,
             "total_orders": total_orders_global,
+            "pickable_lines": pickable_lines_global,
+            "pickable_lines_pct": pickable_lines_pct_global,
+            "total_lines": total_lines_global,
             "avg_inventory_days": round(sum(inv_days_list) / len(inv_days_list), 1) if inv_days_list else 0,
         }
         # Guardar KPIs por storage en params para que el historial tenga detalle completo

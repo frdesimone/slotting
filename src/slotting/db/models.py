@@ -1,17 +1,23 @@
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
 from .database import Base
 
-# 1. NUEVA TABLA DE USUARIOS (Preparada para Clerk)
+# 1. TABLA DE USUARIOS (auth nativo, username + password)
 class User(Base):
     __tablename__ = "users"
 
-    # El ID será un String porque Clerk usa IDs como "user_2AbCdE..."
-    id = Column(String, primary_key=True, index=True) 
-    email = Column(String, nullable=True) # Opcional, Clerk ya lo guarda, pero sirve de backup
+    # ID string para compatibilidad con datos históricos del mock
+    id = Column(String, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=True)
+    email = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    logo_data = Column(LargeBinary, nullable=True)
+    logo_mime = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relación

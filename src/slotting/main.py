@@ -38,12 +38,27 @@ from slotting.algorithms.micro.group_score import estimate_cycle_units
 from slotting.algorithms.micro.utils import sku_unit_area_mm2, tray_capacity
 from slotting.models import Tray, TrayItem
 from .db.database import engine, Base, get_db
+from .db.models import User
 from .db.repository import save_macro_execution, save_micro_execution, get_user_executions, get_macro_executions, get_micro_executions
+from .auth import (
+    bootstrap_users,
+    create_access_token,
+    get_current_user,
+    get_current_admin,
+    hash_password,
+    verify_password,
+)
 
 
 
 # Esto le dice a SQLAlchemy: "Che, revisá si existen las tablas. Si no, crealas"
 Base.metadata.create_all(bind=engine)
+
+# Migración aditiva de columnas + seed de admin + migración del mock → bremen
+try:
+    bootstrap_users()
+except Exception as _e:
+    logging.getLogger("slotting").warning(f"bootstrap_users falló en startup: {_e}")
 
 logger = logging.getLogger("slotting")
 
@@ -63,17 +78,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_TOKEN = os.environ.get("API_TOKEN", "token_desarrollo_local_123")
-security = HTTPBearer()
-
-def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials.credentials != API_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return credentials.credentials
+# NOTA: el sistema de auth ahora es username+password con JWT (ver auth.py).
+# Los endpoints protegidos usan get_current_user / get_current_admin directamente.
 
 
 # ==========================================
@@ -159,13 +165,188 @@ def _safe_json(val):
     return val
 
 
+# ==========================================
+# AUTH ENDPOINTS
+# ==========================================
+def _user_to_dict(u: User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "is_admin": bool(u.is_admin),
+        "is_active": bool(u.is_active),
+        "has_logo": u.logo_data is not None,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/v1/auth/login")
+def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == body.username).first()
+    if not user or not verify_password(body.password, user.password_hash or ""):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña inválidos")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Usuario deshabilitado")
+    token = create_access_token(user.id)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _user_to_dict(user),
+    }
+
+
+@app.get("/api/v1/auth/me")
+def auth_me(current_user: User = Depends(get_current_user)):
+    return _user_to_dict(current_user)
+
+
+@app.post("/api/v1/auth/logo")
+async def upload_logo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Validaciones de seguridad
+    allowed = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"}
+    if file.content_type not in allowed:
+        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {file.content_type}")
+    raw = await file.read()
+    if len(raw) > 2 * 1024 * 1024:  # 2MB
+        raise HTTPException(status_code=400, detail="Logo demasiado grande (máx 2MB)")
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.logo_data = raw
+    user.logo_mime = file.content_type
+    db.commit()
+    return {"status": "ok", "has_logo": True}
+
+
+@app.delete("/api/v1/auth/logo")
+def delete_logo(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.logo_data = None
+    user.logo_mime = None
+    db.commit()
+    return {"status": "ok", "has_logo": False}
+
+
+@app.get("/api/v1/auth/logo/{user_id}")
+def get_logo(user_id: str, db: Session = Depends(get_db)):
+    """Sirve el logo del usuario. Sin auth para poder embeberlo en <img src>."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.logo_data:
+        raise HTTPException(status_code=404, detail="Logo no encontrado")
+    return StreamingResponse(
+        io.BytesIO(user.logo_data),
+        media_type=user.logo_mime or "image/png",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+# ==========================================
+# ADMIN ENDPOINTS
+# ==========================================
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+    is_admin: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    password: Optional[str] = None
+    email: Optional[str] = None
+
+
+@app.get("/api/v1/admin/users")
+def admin_list_users(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [_user_to_dict(u) for u in users]
+
+
+@app.post("/api/v1/admin/users", status_code=201)
+def admin_create_user(
+    body: CreateUserRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    username = body.username.strip().lower()
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username debe tener al menos 3 caracteres")
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Password debe tener al menos 6 caracteres")
+
+    existing = db.query(User).filter(User.username == username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="El username ya existe")
+
+    import uuid as _uuid
+    new_user = User(
+        id=f"user_{_uuid.uuid4().hex[:12]}",
+        username=username,
+        email=body.email,
+        password_hash=hash_password(body.password),
+        is_admin=bool(body.is_admin),
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return _user_to_dict(new_user)
+
+
+@app.patch("/api/v1/admin/users/{user_id}")
+def admin_update_user(
+    user_id: str,
+    body: UpdateUserRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Protección: no permitir que el admin se deshabilite/desadministre a sí mismo
+    if user.id == admin.id and (body.is_active is False or body.is_admin is False):
+        raise HTTPException(status_code=400, detail="No podés modificar tu propia cuenta de admin de esa forma")
+
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    if body.is_admin is not None:
+        user.is_admin = body.is_admin
+    if body.email is not None:
+        user.email = body.email
+    if body.password is not None:
+        if len(body.password) < 6:
+            raise HTTPException(status_code=400, detail="Password debe tener al menos 6 caracteres")
+        user.password_hash = hash_password(body.password)
+    db.commit()
+    db.refresh(user)
+    return _user_to_dict(user)
+
+
 @app.get("/api/v1/history")
 def get_history(
-    token: str = Depends(verificar_token),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Retorna el historial de ejecuciones Macro y Micro del usuario."""
-    CURRENT_USER_ID = "frontend_user_mock_123"
+    CURRENT_USER_ID = current_user.id
 
     macro_rows = get_macro_executions(db, CURRENT_USER_ID, limit=20)
     micro_rows = get_micro_executions(db, CURRENT_USER_ID, limit=20)
@@ -223,8 +404,8 @@ async def detectar_outliers_endpoint(
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
     col_pedido_cant: str = Form("Cantidad UM de venta"),
-    
-    token: str = Depends(verificar_token)
+
+    current_user: User = Depends(get_current_user),
 ):
     """Detecta y retorna anomalías en el dataset (Un solo archivo Excel)."""
     path_file = guardar_temp(file) # Guardamos el único Excel temporalmente
@@ -437,12 +618,12 @@ async def ejecutar_macro(
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
     col_pedido_cant: str = Form("Cantidad UM de venta"),
-    
-    token: str = Depends(verificar_token),
+
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     path_file = guardar_temp(file)
-    CURRENT_USER_ID = "frontend_user_mock_123"
+    CURRENT_USER_ID = current_user.id
 
     try:
         mapping_config = {
@@ -749,7 +930,7 @@ def _rescue_unassigned_skus(
 async def ejecutar_micro(
     file: UploadFile = File(...),
     payload: str = Form(..., description="JSON con MicroPayload: storages, skus, weights, mapping, etc."),
-    token: str = Depends(verificar_token),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Ejecuta el Micro Slotting (Armado de Bandejas), opcionalmente optimizado."""
@@ -759,7 +940,7 @@ async def ejecutar_micro(
         raise HTTPException(status_code=422, detail=f"Payload JSON inválido: {e}") from e
 
     path_file = guardar_temp(file)
-    CURRENT_USER_ID = "frontend_user_mock_123"
+    CURRENT_USER_ID = current_user.id
     
     try:
         mapping_config = payload_data.mapping or {}

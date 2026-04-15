@@ -523,9 +523,13 @@ def _build_allocation_context(
         # 2. SEGURO ANTI-FANTASMAS (Sincronización estricta con Macro)
         # Si la demanda bajó a 0 (por falta de rotación o por redondeo),
         # pero el SKU fue enviado al Micro, DEBE ubicarse físicamente.
-        # Le asignamos la cantidad mínima de supervivencia.
+        # Usamos 1.0 unidad mínima Y reseteamos um_ratio a 1.0:
+        # si ur > max_footprints (e.g. boxes_per_m3=50 y caben 43),
+        # _max_units_that_fit devolvería floor(1/50)*50=0 y el SKU nunca se ubicaría.
+        # Un SKU ghost (demanda=0) no tiene semántica de caja entera — solo necesita presencia física.
         if cycle_units[sku_id] <= 0.001:
-            cycle_units[sku_id] = ur if getattr(config, "enforce_integer_replenishment", False) else 1.0
+            cycle_units[sku_id] = 1.0
+            um_ratios[sku_id] = 1.0
 
     total_area, total_weight = _compute_totals(sku_ids, cycle_units, unit_area, unit_weight)
     max_area, max_weight = tray_capacity(

@@ -423,6 +423,7 @@ async def detectar_outliers_endpoint(
     col_desc: str = Form("Descripción"),
     col_cajas_m3: str = Form("Cajas/M3"),
     col_categoria: str = Form("Categoría"),
+    replenishment_unit_mappings_json: str = Form(""),
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
@@ -432,7 +433,7 @@ async def detectar_outliers_endpoint(
 ):
     """Detecta y retorna anomalías en el dataset (Un solo archivo Excel)."""
     path_file = guardar_temp(file) # Guardamos el único Excel temporalmente
-    
+
     try:
         mapping_config = {
             "sheet_maestro": sheet_maestro,
@@ -450,6 +451,13 @@ async def detectar_outliers_endpoint(
             "col_pedido_sku": col_pedido_sku,
             "col_pedido_cant": col_pedido_cant
         }
+        if replenishment_unit_mappings_json:
+            try:
+                rum_list = json.loads(replenishment_unit_mappings_json)
+                if isinstance(rum_list, list) and rum_list:
+                    mapping_config["replenishment_unit_mappings"] = rum_list
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # Le pasamos el mismo path para todo
         skus_dict, orders, stats = load_slotting_inputs_with_stats(
@@ -857,7 +865,9 @@ def _rescue_unassigned_skus(
         if getattr(config, "enforce_integer_replenishment", False) and um_ratio > 0:
             repl = cycle_units / um_ratio
             if repl < 1.0:
-                cycle_units = um_ratio if repl >= getattr(config, "round_to_one_threshold", 0.25) else um_ratio
+                # Ghost SKU (demanda=0): mantener 1.0 para garantizar ubicación física.
+                # NO usar um_ratio: si um_ratio > capacidad de la bandeja, el SKU nunca se ubica.
+                cycle_units = 1.0 if cycle_units <= 1.0 else (um_ratio if repl >= getattr(config, "round_to_one_threshold", 0.25) else 0.0)
             else:
                 cycle_units = round(repl) * um_ratio
 

@@ -26,6 +26,7 @@ class StorageConfig:
     stackability_factor: int = 1  # Factor de apilabilidad
     max_vol_per_sku: float = float("inf")  # Límite volumen por SKU (legacy: max_volume)
     capacity_m3: float = 0.0  # Legacy: capacidad total en m³; si > 0 se usa en vez de num_locations*dims
+    replenishment_unit_name: str = ""  # Nombre de la unidad de reposición a usar (de replenishment_units_by_type del SKU)
 
     def _occupancy_factor(self) -> float:
         """Factor de ocupación (0-1). Soporta occupancy_pct como 0.85 o 85."""
@@ -76,6 +77,7 @@ class StorageConfig:
             "priority": self.priority,
             "is_multiproduct": self.is_multiproduct,
             "stackability_factor": self.stackability_factor,
+            "replenishment_unit_name": self.replenishment_unit_name,
         }
 
     @classmethod
@@ -118,6 +120,7 @@ class StorageConfig:
                 max_vol_per_sku=max_vol,
                 is_multiproduct=bool(d.get("is_multiproduct", True)),
                 stackability_factor=int(d.get("stackability_factor", 1)),
+                replenishment_unit_name=str(d.get("replenishment_unit_name", "") or ""),
             )
 
         # Formato legacy (capacity, occupancy, max_volume, etc.)
@@ -148,6 +151,7 @@ class StorageConfig:
             capacity_m3=capacity,
             is_multiproduct=bool(d.get("is_multiproduct", True)),
             stackability_factor=int(d.get("stackability_factor", 1)),
+            replenishment_unit_name=str(d.get("replenishment_unit_name", "") or ""),
         )
 
 

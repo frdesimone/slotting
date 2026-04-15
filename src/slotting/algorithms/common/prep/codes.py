@@ -4,7 +4,7 @@ Soporta archivos CSV (Legacy) y Excel (Bremen/SAP) con detección automática de
 Incluye lógica 'Show Must Go On' para evitar paradas por filtros vacíos.
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import pandas as pd
@@ -49,6 +49,7 @@ class SkuRecord:
     description: str = ""
     boxes_per_m3: float = 0.0
     category: str = ""
+    replenishment_units_by_type: dict = field(default_factory=dict)
 
 
 def load_sku_records_from_codes(path: str | Path, mapping: dict = None, xls: pd.ExcelFile = None) -> tuple[dict[str, SkuRecord], DataValidation]:
@@ -181,6 +182,25 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
     col_main_w = get_col("col_ancho", "Ancho (CM)")
     col_main_l = get_col("col_largo", "Largo (CM)")
 
+    # Procesar replenishment_unit_mappings (nuevo) o col_cajas_m3 (legacy)
+    raw_rum = mapping.get("replenishment_unit_mappings")
+    replenishment_unit_mappings = raw_rum if isinstance(raw_rum, list) else []
+
+    replenishment_cols: list[tuple[str, object]] = []  # (name, col_or_None)
+    if replenishment_unit_mappings:
+        for rum in replenishment_unit_mappings:
+            rum_name = str(rum.get("name", "")).strip()
+            rum_col_raw = rum.get("column", "")
+            rum_col = None
+            if rum_col_raw:
+                target = clean_text(rum_col_raw)
+                rum_col = next((c for c in df.columns if c == target), None) or next((c for c in df.columns if target in c), None)
+            if rum_name:
+                replenishment_cols.append((rum_name, rum_col))
+    else:
+        # Fallback: col_cajas_m3 legacy → nombre genérico "Reposición"
+        replenishment_cols = [("Reposición", col_cajas)]
+
     def safe_float(val):
         if pd.isna(val) or val is None: return 0.0
         s = str(val).strip()
@@ -213,17 +233,27 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
         weight_kg = safe_float(row[col_p]) if col_p else 0.0
         description = safe_str(row[col_d]) if col_d else ""
-        um_ratio_val = safe_float(row[col_cajas]) if col_cajas else 0.0
-        boxes_per_m3 = um_ratio_val if um_ratio_val > 0 else 0.0
         category = safe_str(row[col_cat]) if col_cat else ""
+
+        # Leer todos los ratios de reposición
+        replenishment_units_by_type: dict[str, float] = {}
+        for rum_name, rum_col in replenishment_cols:
+            val = safe_float(row[rum_col]) if rum_col and rum_col in row.index else 0.0
+            if val > 0:
+                replenishment_units_by_type[rum_name] = val
+
+        # boxes_per_m3: primer ratio disponible (backward compat)
+        boxes_per_m3 = next(iter(replenishment_units_by_type.values()), 0.0)
 
         records[sku_id] = SkuRecord(
             sku_id=sku_id, avg_units_per_line=None, volume=vol_m3, weight=weight_kg,
             height=h, width=w, length=l, is_sensitive=False, vlm_eligible=True, source_classification="BREMEN_XLS",
-            description=description, boxes_per_m3=boxes_per_m3, category=category
+            description=description, boxes_per_m3=boxes_per_m3, category=category,
+            replenishment_units_by_type=replenishment_units_by_type,
         )
 
     # Reporte de validación
+    replenishment_logical = [(f"U.Rep. '{n}'", c) for n, c in replenishment_cols]
     LOGICAL_COLS_MAESTRO = [
         ("Código de SKU", id_col),
         ("Descripción del SKU", col_d),
@@ -231,9 +261,8 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         ("Alto (cm)", col_main_h),
         ("Largo (cm)", col_main_l),
         ("Ancho (cm)", col_main_w),
-        ("UM venta a UM reposición", col_cajas),
         ("Categoría", col_cat),
-    ]
+    ] + replenishment_logical
     print("\n🔍 [DEBUG COLUMNAS MAESTRO - MAPEO EXACTO]")
     found_columns = []
     missing_columns = []
@@ -252,6 +281,11 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
         w_s = safe_float(row.get(col_main_w, 0)) if col_main_w else 0.0
         l_s = safe_float(row.get(col_main_l, 0)) if col_main_l else 0.0
         vol_calc = (h_s / 100.0) * (w_s / 100.0) * (l_s / 100.0) if (h_s > 0 and w_s > 0 and l_s > 0) else 0.0
+        sample_rum: dict[str, float] = {}
+        for rum_name, rum_col in replenishment_cols:
+            val = safe_float(row[rum_col]) if rum_col and rum_col in row.index else 0.0
+            if val > 0:
+                sample_rum[rum_name] = val
         sample_data.append({
             "Código de SKU": str(row[id_col]) if id_col and id_col in row.index else "",
             "Descripción del SKU": str(row[col_d]) if col_d and col_d in row.index else "",
@@ -260,7 +294,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             "Alto (cm)": row[col_main_h] if col_main_h and col_main_h in row.index else "",
             "Largo (cm)": row[col_main_l] if col_main_l and col_main_l in row.index else "",
             "Ancho (cm)": row[col_main_w] if col_main_w and col_main_w in row.index else "",
-            "UM venta a UM reposición": row[col_cajas] if col_cajas and col_cajas in row.index else "",
+            "U.Rep.": sample_rum if sample_rum else "",
             "Categoría": str(row[col_cat]) if col_cat and col_cat in row.index else "",
         })
     validation = DataValidation(found_columns=found_columns, missing_columns=missing_columns, sample_data=sample_data)

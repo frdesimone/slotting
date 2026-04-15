@@ -108,6 +108,7 @@ class StorageTypeConfig(BaseModel):
     is_variable_height: bool | None = None
     enforce_integer_replenishment: bool = False
     round_to_one_threshold: float = 0.25
+    replenishment_unit_name: str | None = None
 
 
 class SkuMicroInput(BaseModel):
@@ -636,6 +637,7 @@ async def ejecutar_macro(
     col_desc: str = Form("Descripción"),
     col_cajas_m3: str = Form("Cajas/M3"),
     col_categoria: str = Form("Categoría"),
+    replenishment_unit_mappings_json: str = Form(""),
     sheet_pedidos: str = Form("Pedidos"),
     col_pedido_id: str = Form("Nro pedido"),
     col_pedido_sku: str = Form("Codigo II - Producto"),
@@ -656,6 +658,13 @@ async def ejecutar_macro(
             "sheet_pedidos": sheet_pedidos, "col_pedido_id": col_pedido_id,
             "col_pedido_sku": col_pedido_sku, "col_pedido_cant": col_pedido_cant
         }
+        if replenishment_unit_mappings_json:
+            try:
+                rum_list = json.loads(replenishment_unit_mappings_json)
+                if isinstance(rum_list, list) and rum_list:
+                    mapping_config["replenishment_unit_mappings"] = rum_list
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # Parsear exclusiones
         ex_skus_set, ex_orders_set = set(), set()
@@ -763,6 +772,7 @@ async def ejecutar_macro(
                         "total_weight": getattr(r, "total_weight", 0) or 0,
                         "total_vol": getattr(r, "total_vol", 0) or 0,
                         "replenishment_units": getattr(r, "replenishment_units", 0) or 0,
+                        "replenishment_unit_name": getattr(r, "replenishment_unit_name", "") or "",
                     }
                     for r in st_results
                 ]
@@ -1027,6 +1037,20 @@ async def ejecutar_micro(
 
             # Filtrar SKUs que pertenecen a este storage_type
             skus_for_storage = [s for s in skus_list if sku_to_storage.get(str(s.sku_id).strip(), "").upper() == st_upper]
+
+            # Parchear boxes_per_m3 según replenishment_unit_name del storage type
+            _repl_unit_name = getattr(storage_cfg, "replenishment_unit_name", None) or ""
+            if _repl_unit_name:
+                from dataclasses import replace as _dc_replace
+                _patched = []
+                for _sku in skus_for_storage:
+                    _rut = getattr(_sku, "replenishment_units_by_type", {}) or {}
+                    _ratio = _rut.get(_repl_unit_name)
+                    if _ratio and float(_ratio) > 0:
+                        _sku = _dc_replace(_sku, boxes_per_m3=float(_ratio))
+                    _patched.append(_sku)
+                skus_for_storage = _patched
+
             if not skus_for_storage:
                 print(f"   ⏭️ [Micro] {st_key}: sin SKUs, omitiendo.")
                 continue

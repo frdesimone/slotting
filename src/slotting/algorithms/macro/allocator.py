@@ -23,6 +23,7 @@ class MacroResult:
     sku_vol: float = 0.0
     actual_sales_units: float = 0.0
     replenishment_units: float = 0.0
+    replenishment_unit_name: str = ""
     width: float = 0.0
     length: float = 0.0
     height: float = 0.0
@@ -124,21 +125,38 @@ def run_macro_slotting(
                 usage[name] += cycle_vol
 
                 # --- CÁLCULO DE REPOSICIÓN Y LOGGING ---
+                _repl_unit_name = getattr(st, "replenishment_unit_name", "") or ""
                 um_ratio = 1.0
-                for attr in ["um_ratio", "boxes_per_m3", "cajas_m3"]:
-                    val = getattr(sku, attr, None)
-                    if val is not None:
-                        try:
-                            if float(val) > 0:
-                                um_ratio = float(val)
-                                break
-                        except (ValueError, TypeError):
-                            pass
+                if _repl_unit_name:
+                    _rut = getattr(sku, "replenishment_units_by_type", {}) or {}
+                    _ratio = _rut.get(_repl_unit_name)
+                    if _ratio and float(_ratio) > 0:
+                        um_ratio = float(_ratio)
+                    else:
+                        for attr in ["boxes_per_m3", "um_ratio"]:
+                            val = getattr(sku, attr, None)
+                            if val is not None:
+                                try:
+                                    if float(val) > 0:
+                                        um_ratio = float(val)
+                                        break
+                                except (ValueError, TypeError):
+                                    pass
+                else:
+                    for attr in ["um_ratio", "boxes_per_m3", "cajas_m3"]:
+                        val = getattr(sku, attr, None)
+                        if val is not None:
+                            try:
+                                if float(val) > 0:
+                                    um_ratio = float(val)
+                                    break
+                            except (ValueError, TypeError):
+                                pass
 
                 unidades_venta = (cycle_vol / sku_vol) if sku_vol > 0 else cycle_qty
                 rep_units = unidades_venta / um_ratio
 
-                print(f"📦 [MACRO MATH] SKU: {sku.sku_id} | Vol.Ciclo: {cycle_vol:.4f} / Vol.Unitario: {sku_vol:.6f} = {unidades_venta:.2f} Unidades Venta | Ratio: {um_ratio} -> REPOSICIÓN: {rep_units:.2f}")
+                print(f"📦 [MACRO MATH] SKU: {sku.sku_id} | Vol.Ciclo: {cycle_vol:.4f} / Vol.Unitario: {sku_vol:.6f} = {unidades_venta:.2f} Unidades Venta | Ratio: {um_ratio} ({_repl_unit_name or 'default'}) -> REPOSICIÓN: {rep_units:.2f}")
 
                 total_sku_weight = unidades_venta * float(sku.weight or 0)
 
@@ -157,6 +175,7 @@ def run_macro_slotting(
                         sku_vol=sku_vol,
                         actual_sales_units=unidades_venta,
                         replenishment_units=rep_units,
+                        replenishment_unit_name=_repl_unit_name,
                         width=getattr(sku, "width", 0) or 0,
                         length=getattr(sku, "length", 0) or 0,
                         height=getattr(sku, "height", 0) or 0,
@@ -204,6 +223,7 @@ def run_macro_slotting(
                     sku_vol=sku_vol,
                     actual_sales_units=unidades_venta,
                     replenishment_units=rep_units,
+                    replenishment_unit_name="",
                     width=getattr(sku, "width", 0) or 0,
                     length=getattr(sku, "length", 0) or 0,
                     height=getattr(sku, "height", 0) or 0,

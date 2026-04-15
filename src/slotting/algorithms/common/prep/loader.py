@@ -151,6 +151,7 @@ def _build_skus(
                 vlm_eligible=record.vlm_eligible,
                 description=record.description or "",
                 boxes_per_m3=record.boxes_per_m3 or 0.0,
+                replenishment_units_by_type=record.replenishment_units_by_type or {},
                 category=record.category or "",
                 period_days=period_days,
                 # -------------------------------

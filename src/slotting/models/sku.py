@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,7 @@ class SKU:
     vlm_eligible: bool = True
     description: str = ""
     boxes_per_m3: float = 0.0
+    replenishment_units_by_type: dict = field(default_factory=dict, hash=False, compare=False)
     category: str = ""
 
     cycle_units: float | None = None

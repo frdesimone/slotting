@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
+from slotting.algorithms.common.prep import load_slotting_inputs_with_stats, PrepStats
+from slotting.algorithms.common.prep.loader import load_slotting_inputs  # noqa: F401
 
 
 def _write_csv(path: Path, rows: list[list[str]]) -> None:
@@ -41,7 +42,7 @@ def test_load_slotting_inputs_combines_and_filters(tmp_path: Path) -> None:
         ],
     )
 
-    skus, orders, stats = load_slotting_inputs_with_stats(
+    skus, orders, stats = load_slotting_inputs(
         codes_path,
         orders_path,
         cycle_days=10,

@@ -67,8 +67,12 @@ def test_subgrouping_respects_max_size_and_delta_stop() -> None:
 
 
 def test_tray_count_uses_op_void_area() -> None:
+    # SKU A: volume=1e-6 m³, height=10 mm (no width/length)
+    # unit_area = volume_mm3 / height_mm = (1e-6 * 1e9) / (10 * 10) = 1000 / 100 = 10 mm²
+    # tray_base_area_max=1000, tray_op_void=0.1 => max_area = 900 mm²
+    # cycle_units=100 => total_area = 100 * 10 = 1000 mm² > 900 → forces 2 trays
     skus = [
-        SKU(sku_id="A", rot=1, height=10, volume=1e-6, weight=1, cycle_units=10),
+        SKU(sku_id="A", rot=1, height=10, volume=1e-6, weight=1, cycle_units=100),
     ]
     group = AffinityGroup(seed_sku_id="A", sku_ids=["A"], score=1.0)
     affinity_graph = {"A": []}

@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 from slotting.models import SKU, Order
 from slotting.algorithms.macro.config import MacroSlottingConfig
 from slotting.algorithms.micro.config import MicroSlottingConfig
+from slotting.algorithms.micro.strategies import JaccardMetric
 
 def json_to_skus(data: List[Dict[str, Any]]) -> List[SKU]:
     """
@@ -41,20 +42,38 @@ def json_to_orders(data: List[Dict[str, Any]]) -> List[Order]:
     ]
 
 def params_to_macro_config(params: Dict[str, Any]) -> MacroSlottingConfig:
-    """Convierte parámetros de configuración (headers/body) para Macro."""
+    """Convierte parámetros de configuración (headers/body) para Macro.
+
+    MacroSlottingConfig ya no recibe vlm_total_volume ni vlm_occupancy_target —
+    la capacidad se define via storage_types. Este adapter crea una config vacía
+    (sin storage types) apta para tests unitarios que solo validan la clasificación
+    ABC o el descarte de SKUs.
+    """
     return MacroSlottingConfig(
-        vlm_total_usable_volume=float(params.get("vlm_total_volume", 60.0)),
-        vlm_occupancy_target=float(params.get("vlm_occupancy", 0.85)),
-        # Permite recibir tupla o lista para thresholds
-        abc_thresholds=tuple(params.get("abc_thresholds", (0.80, 0.95)))
+        storage_types=[],
+        abc_thresholds=tuple(params.get("abc_thresholds", (0.80, 0.95))),
     )
 
 def params_to_micro_config(params: Dict[str, Any]) -> MicroSlottingConfig:
-    """Convierte parámetros de configuración para Micro."""
+    """Convierte parámetros de configuración para Micro.
+
+    Los campos que son objetos (affinity_metric) no pueden llegar como strings
+    desde el JSON. Se convierten al tipo correcto antes de construir el config.
+    """
     # Mapeo directo de claves JSON a atributos de la clase de config
     # Se filtran solo los parámetros que existen en la clase para evitar errores
-    valid_keys = MicroSlottingConfig.__dataclass_fields__.keys()
+    valid_keys = set(MicroSlottingConfig.__dataclass_fields__.keys())
     filtered_params = {k: v for k, v in params.items() if k in valid_keys}
-    
+
+    # Si affinity_metric llega como string, convertirlo al objeto correspondiente.
+    # Por ahora solo se soporta "jaccard" (el único implementado).
+    if "affinity_metric" in filtered_params and isinstance(filtered_params["affinity_metric"], str):
+        filtered_params["affinity_metric"] = JaccardMetric()
+
     # Instanciamos con lo que vino, el resto usa defaults
     return MicroSlottingConfig(**filtered_params)
+
+
+# Aliases de compatibilidad (nombres anteriores usados en tests heredados)
+headers_to_macro_config = params_to_macro_config
+headers_to_micro_config = params_to_micro_config

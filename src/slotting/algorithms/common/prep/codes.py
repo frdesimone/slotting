@@ -307,7 +307,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
 
 def _load_from_csv_generic(path: Path) -> dict[str, SkuRecord]:
     """Carga Legacy CSV"""
-    print(f"📄 [CSV Loader] Procesando: {path.name}")
+    print(f"[CSV Loader] Procesando: {path.name}")
     rows = read_csv_rows(path)
     header_map, data_rows = find_header(
         rows,
@@ -315,32 +315,76 @@ def _load_from_csv_generic(path: Path) -> dict[str, SkuRecord]:
         source=str(path),
     )
 
-    records: dict[str, SkuRecord] = {}
+    def _cell(row: list[str], col_idx: int | None, default: str = "") -> str:
+        """Safely read a cell from a CSV row by column index."""
+        if col_idx is None or col_idx >= len(row):
+            return default
+        return row[col_idx]
+
+    # First pass: parse raw values per row. Volume derivation is deferred until
+    # after all rows for the same SKU are merged, so that an explicit volume in a
+    # later row is not shadowed by a dimension-derived value from an earlier row.
+    raw_records: dict[str, dict] = {}  # sku_id → {vol, weight, h, w, l, ...}
     for r in data_rows:
-        raw_id = r.get(header_map[COL_CODIGO], "")
+        raw_id = _cell(r, header_map.get(COL_CODIGO))
         if not raw_id: continue
         sku_id = str(raw_id).strip()
-        
-        vol = parse_float(r.get(header_map.get(COL_M3), "0"))
-        weight = parse_float(r.get(header_map.get(COL_PESO), "0"))
-        h = parse_float(r.get(header_map.get(COL_ALTO), "0"))
-        w = parse_float(r.get(header_map.get(COL_ANCHO), "0"))
-        l = parse_float(r.get(header_map.get(COL_LARGO), "0"))
 
-        if (h == 0 or w == 0 or l == 0) and vol > 0:
-            side_mm = (vol ** (1/3)) * 1000.0
-            h, w, l = side_mm, side_mm, side_mm
+        vol = parse_float(_cell(r, header_map.get(COL_M3), ""))
+        weight = parse_float(_cell(r, header_map.get(COL_PESO), ""))
+        h = parse_float(_cell(r, header_map.get(COL_ALTO), ""))
+        w = parse_float(_cell(r, header_map.get(COL_ANCHO), ""))
+        l = parse_float(_cell(r, header_map.get(COL_LARGO), ""))
 
-        sens_val = str(r.get(header_map.get(COL_SENSIBLE), "")).lower()
+        sens_val = _cell(r, header_map.get(COL_SENSIBLE), "").lower()
         is_sensitive = sens_val in ["si", "true", "1", "s"]
-        
-        apto_val = str(r.get(header_map.get(COL_APTO_VLM), "1")).lower()
+
+        apto_val = _cell(r, header_map.get(COL_APTO_VLM), "1").lower()
         vlm_eligible = apto_val not in ["no", "false", "0", "n"]
 
-        record = SkuRecord(
-            sku_id=sku_id, avg_units_per_line=None, volume=vol, weight=weight,
-            height=h, width=w, length=l, is_sensitive=is_sensitive,
-            vlm_eligible=vlm_eligible, source_classification="LEGACY_CSV"
+        if sku_id in raw_records:
+            # Merge: fill in fields that were None in the existing record with
+            # values from this row. This handles the common pattern where a SKU
+            # appears in two rows with complementary data (e.g., dimensions in
+            # one row and volume/weight in another).
+            ex = raw_records[sku_id]
+            raw_records[sku_id] = {
+                "vol": vol if ex["vol"] is None else ex["vol"],
+                "weight": weight if ex["weight"] is None else ex["weight"],
+                "h": h if ex["h"] is None else ex["h"],
+                "w": w if ex["w"] is None else ex["w"],
+                "l": l if ex["l"] is None else ex["l"],
+                "is_sensitive": ex["is_sensitive"] or is_sensitive,
+                "vlm_eligible": ex["vlm_eligible"] and vlm_eligible,
+            }
+        else:
+            raw_records[sku_id] = {
+                "vol": vol, "weight": weight,
+                "h": h, "w": w, "l": l,
+                "is_sensitive": is_sensitive, "vlm_eligible": vlm_eligible,
+            }
+
+    # Second pass: derive missing volume/dimensions after merging all rows.
+    records: dict[str, SkuRecord] = {}
+    for sku_id, d in raw_records.items():
+        vol = d["vol"]
+        h = d["h"] or 0.0
+        w = d["w"] or 0.0
+        l = d["l"] or 0.0
+
+        # Derive volume from physical dims (mm → m conversion: /1000 each axis)
+        if vol is None and h > 0 and w > 0 and l > 0:
+            vol = (h / 1000.0) * (w / 1000.0) * (l / 1000.0)
+
+        if (h == 0 or w == 0 or l == 0) and vol and vol > 0:
+            side_mm = (vol ** (1 / 3)) * 1000.0
+            h, w, l = side_mm, side_mm, side_mm
+
+        records[sku_id] = SkuRecord(
+            sku_id=sku_id, avg_units_per_line=None,
+            volume=vol, weight=d["weight"],
+            height=h, width=w, length=l,
+            is_sensitive=d["is_sensitive"], vlm_eligible=d["vlm_eligible"],
+            source_classification="LEGACY_CSV",
         )
-        records[sku_id] = record
     return records

@@ -10,9 +10,7 @@ from slotting.algorithms.micro import (
     select_groups,
 )
 
-from slotting.algorithms.common.prep import (
-    load_slotting_inputs_with_stats
-)
+from slotting.algorithms.common.prep.loader import load_slotting_inputs
 
 
 def _write_csv(path: Path, rows: list[list[str]]) -> None:
@@ -83,9 +81,9 @@ def test_end_to_end_csv_like_docs(tmp_path: Path) -> None:
         unassigned_include=False,
     )
 
-    skus, orders, _ = load_slotting_inputs_with_stats(
-        codes_csv_path=codes_path,
-        orders_csv_path=orders_path,
+    skus, orders, _ = load_slotting_inputs(
+        codes_path,
+        orders_path,
         cycle_days=config.cycle_days,
         period_days=180.0,
         include_zero_rot=False,

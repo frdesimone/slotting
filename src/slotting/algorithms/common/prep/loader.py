@@ -95,16 +95,42 @@ def load_slotting_inputs(
     cycle_days: float,
     period_days: float = 180.0,
     include_zero_rot: bool = False,
-) -> tuple[list[SKU], list[Order]]:
-    """Load SKU + Order inputs from CSV files (prep pipeline)."""
-    skus, orders, _ = load_slotting_inputs_with_stats(
-        codes_csv_path=codes_csv_path,
-        orders_csv_path=orders_csv_path,
+) -> tuple[list[SKU], list[Order], PrepStats]:
+    """Load SKU + Order inputs from two separate CSV files (legacy prep pipeline).
+
+    Calls the codes and orders loaders directly so that each file can be a
+    CSV — unlike load_slotting_inputs_with_stats which expects a single Excel.
+
+    Returns (skus, orders, stats) to be consistent with
+    load_slotting_inputs_with_stats.
+    """
+    _validate_input_params(cycle_days=cycle_days, period_days=period_days)
+    stats = PrepStats()
+
+    sku_records, maestro_validation = load_sku_records_from_codes(codes_csv_path)
+    stats.maestro_validation = maestro_validation
+    stats.total_skus_master = len(sku_records)
+
+    allowed_skus = set(sku_records.keys())
+
+    orders, rot_by_sku, units_by_sku, order_stats = load_orders_from_pedidos(
+        orders_csv_path,
+        allowed_skus=allowed_skus,
+    )
+    stats.order_stats = order_stats
+
+    skus = _build_skus(
+        sku_records=sku_records,
+        rot_by_sku=rot_by_sku,
+        units_by_sku=units_by_sku,
         cycle_days=cycle_days,
         period_days=period_days,
         include_zero_rot=include_zero_rot,
+        stats=stats,
     )
-    return skus, orders
+
+    filtered_orders = _filter_orders_by_skus(orders, skus, stats)
+    return skus, filtered_orders, stats
 
 def _build_skus(
     sku_records: dict[str, SkuRecord],

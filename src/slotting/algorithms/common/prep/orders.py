@@ -7,6 +7,7 @@ from pathlib import Path
 
 from slotting.models import Order
 from .stats import OrderLoadStats, DataValidation
+from .parsing import read_csv_rows, normalize_header
 
 def _clean_numeric_col(series):
     # Convertimos a número limpiando comas y forzamos el valor absoluto
@@ -31,7 +32,7 @@ def load_orders_from_pedidos(
     col_pedido_cant = mapping.get("col_pedido_cant", "Cantidad UM de venta").strip().lower()
     col_pedido_fecha = mapping.get("col_pedido_fecha", "Fecha").strip().lower()
 
-    print(f"📂 [Orders Loader] Procesando órdenes...")
+    print("[Orders Loader] Procesando ordenes...")
 
     if path_obj.suffix.lower() in [".xlsx", ".xls"]:
         should_close_xls = False
@@ -73,7 +74,29 @@ def load_orders_from_pedidos(
         if should_close_xls:
             xls.close()
     else:
-        df = pd.read_csv(path_obj, sep=None, engine='python')
+        # CSV path: use row-by-row parser with header detection to handle
+        # files that have preamble rows before the actual column headers.
+        csv_rows = read_csv_rows(path_obj)
+        header_row_idx: int | None = None
+        header_names: list[str] = []
+        for row_idx, row in enumerate(csv_rows):
+            normalized = [normalize_header(c) for c in row]
+            if any(col_pedido_id in n for n in normalized) and any(col_pedido_sku in n for n in normalized):
+                header_row_idx = row_idx
+                header_names = normalized
+                break
+        if header_row_idx is None:
+            raise ValueError(
+                f"Faltan columnas de pedidos en CSV. ID='{col_pedido_id}', SKU='{col_pedido_sku}'"
+            )
+        data_rows = csv_rows[header_row_idx + 1:]
+        # Build a DataFrame using only the columns we care about
+        records: list[dict] = []
+        for row in data_rows:
+            if len(row) < len(header_names):
+                row = row + [""] * (len(header_names) - len(row))
+            records.append({h: row[i] for i, h in enumerate(header_names)})
+        df = pd.DataFrame(records)
 
     # Normalizar las columnas que sí trajimos
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -88,6 +111,11 @@ def load_orders_from_pedidos(
     id_col = next((c for c in df.columns if col_pedido_id in c), None)
     sku_col = next((c for c in df.columns if col_pedido_sku in c), None)
     cant_col = next((c for c in df.columns if col_pedido_cant in c), None)
+    # Fallback: if the configured quantity column name didn't match, try generic
+    # "cantidad" prefix so CSV files with headers like "Cantidad unidades" are
+    # still recognised without requiring an explicit mapping.
+    if cant_col is None:
+        cant_col = next((c for c in df.columns if c.startswith("cantidad")), None)
 
     if not id_col or not sku_col:
         raise ValueError(f"Faltan columnas de pedidos. ID='{col_pedido_id}', SKU='{col_pedido_sku}'")

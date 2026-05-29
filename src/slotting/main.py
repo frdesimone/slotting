@@ -2,10 +2,9 @@ import io
 import math
 import os
 import shutil
-import ipaddress
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional
 import json
 
 import pandas as pd
@@ -14,13 +13,10 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Form, Body
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, Body
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware # IMPORTANTE: Agregar esta importación
 
-from .config import get_settings
-from .logging_config import configure_logging
 
 # --- IMPORTACIONES DEL CORE DE SLOTTING ---
 from slotting.algorithms.common.prep import load_slotting_inputs_with_stats
@@ -39,7 +35,7 @@ from slotting.algorithms.micro.utils import sku_unit_area_mm2, tray_capacity
 from slotting.models import Tray, TrayItem
 from .db.database import engine, Base, get_db
 from .db.models import User
-from .db.repository import save_macro_execution, save_micro_execution, get_user_executions, get_macro_executions, get_micro_executions
+from .db.repository import save_macro_execution, save_micro_execution, get_macro_executions, get_micro_executions
 from .auth import (
     bootstrap_users,
     create_access_token,

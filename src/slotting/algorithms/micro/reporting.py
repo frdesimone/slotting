@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 from slotting.algorithms.micro.group_score import estimate_cycle_units, group_cost_cycle_volume
 from slotting.algorithms.micro.scoring.height import height_diff_by_area_for_tray

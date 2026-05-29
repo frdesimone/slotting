@@ -6,9 +6,6 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
-from rich.layout import Layout
-from rich.progress import BarColumn, Progress, TextColumn
-from rich import print as rprint
 from collections import Counter
 
 console = Console()
@@ -244,4 +241,4 @@ def print_micro_tray(tray, items, detailed=False):
         t.add_row(f"... y {len(items)-limit} más", "-", "-")
 
     console.print(t)
-    console.print(f"[dim]Nota: Mostrando los items de mayor volumen primero.[/dim]\n")
+    console.print("[dim]Nota: Mostrando los items de mayor volumen primero.[/dim]\n")

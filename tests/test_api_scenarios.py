@@ -1,5 +1,5 @@
 import pytest
-from slotting.adapter import json_to_skus, json_to_orders, headers_to_macro_config, headers_to_micro_config
+from slotting.adapter import json_to_skus, json_to_orders, params_to_macro_config as headers_to_macro_config, params_to_micro_config as headers_to_micro_config
 from slotting.algorithms.macro.allocator import run_macro_slotting
 from slotting.algorithms.micro.grouping import build_groups
 from slotting.algorithms.micro.optimization.optimizer import optimize, LocalSearchConfig, HybridKpiState

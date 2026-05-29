@@ -31,7 +31,7 @@ def load_orders_from_pedidos(
     col_pedido_cant = mapping.get("col_pedido_cant", "Cantidad UM de venta").strip().lower()
     col_pedido_fecha = mapping.get("col_pedido_fecha", "Fecha").strip().lower()
 
-    print(f"📂 [Orders Loader] Procesando órdenes...")
+    print("📂 [Orders Loader] Procesando órdenes...")
 
     if path_obj.suffix.lower() in [".xlsx", ".xls"]:
         should_close_xls = False

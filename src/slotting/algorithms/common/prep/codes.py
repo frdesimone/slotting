@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import pandas as pd
-import numpy as np
 
 from .parsing import find_header, parse_float, read_csv_rows
 from .stats import DataValidation
@@ -70,7 +69,7 @@ def _clean_numeric_col(series):
     return pd.to_numeric(series.astype(str).str.replace(',', '.'), errors='coerce').abs()
 
 def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None) -> tuple[dict[str, SkuRecord], DataValidation]:
-    print(f"📂 [Codes Loader] Procesando códigos...")
+    print("📂 [Codes Loader] Procesando códigos...")
     
     def clean_text(text):
         return str(text).replace('\n', ' ').replace('\r', '').strip().lower()
@@ -153,7 +152,7 @@ def _load_from_excel_bremen(path: Path, mapping: dict, xls: pd.ExcelFile = None)
             break
             
     if not header_found:
-        print(f"⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas.")
+        print("⚠️ [Codes Loader] ALERTA: No se detectó la cabecera en las primeras 100 líneas.")
     del df_preview
 
     df = pd.read_excel(xls, sheet_name=sheet_used, header=header_idx)
